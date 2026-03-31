@@ -9,6 +9,7 @@ public class ArtemisApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        DefaultCustomizationSeeder.seedIfNeeded(this);
         ProfilesManager profilesManager = ProfilesManager.getInstance();
         if (!profilesManager.load(this)) {
             Toast.makeText(this, R.string.profile_manager_failed_to_load, Toast.LENGTH_LONG).show();

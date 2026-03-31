@@ -12,11 +12,11 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -87,9 +87,9 @@ public class KeyBoardController {
 
         // Configure button
         buttonConfigure = new Button(context);
-        buttonConfigure.setAlpha(0.5f);
+        buttonConfigure.setAlpha(0.9f);
         buttonConfigure.setFocusable(false);
-        buttonConfigure.setBackgroundResource(R.drawable.ic_keyboard_setting);
+        buttonConfigure.setBackgroundResource(R.drawable.keyboard_config_button_compact);
 
         // Add long click listener for moving the configure button
         buttonConfigure.setOnLongClickListener(new View.OnLongClickListener() {
@@ -317,12 +317,13 @@ public class KeyBoardController {
         removeElements();
 
         DisplayMetrics screen = context.getResources().getDisplayMetrics();
-        int buttonSize = (int) (screen.heightPixels * 0.06f);
+        int buttonSize = (int) (screen.heightPixels * 0.03f);
+        buttonSize = Math.max(buttonSize, KeyBoardControllerConfigurationLoader.screenScale(2, screen.heightPixels));
 
         // Configure button at original position
         FrameLayout.LayoutParams configParams = new FrameLayout.LayoutParams(buttonSize, buttonSize);
-        configParams.leftMargin = 20 + buttonSize;
-        configParams.topMargin = 15;
+        configParams.leftMargin = 12 + buttonSize;
+        configParams.topMargin = 6;
         frame_layout.addView(buttonConfigure, configParams);
 
         // Measure the widths of both buttons
@@ -367,6 +368,14 @@ public class KeyBoardController {
         if (Game.instance == null || !Game.instance.connected) {
             return;
         }
+
+        if (keyEvent.getSource() == 0 && handleI3RemappedFunctionKey(keyEvent)) {
+            if (keyEvent.getSource() != 2) {
+                vibrate(keyEvent.getAction());
+            }
+            return;
+        }
+
         //1-鼠标 0-按键 2-摇杆 3-十字键
         if (keyEvent.getSource() == 1) {
             Game.instance.mouseButtonEvent(keyEvent.getKeyCode(), KeyEvent.ACTION_DOWN == keyEvent.getAction());
@@ -379,6 +388,39 @@ public class KeyBoardController {
         }
     }
 
+    private boolean handleI3RemappedFunctionKey(KeyEvent keyEvent) {
+        short[] keys;
+        switch (keyEvent.getKeyCode()) {
+            case KeyEvent.KEYCODE_F7:
+                keys = new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_RETURN};
+                break;
+            case KeyEvent.KEYCODE_F8:
+                keys = new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_D};
+                break;
+            case KeyEvent.KEYCODE_F9:
+                keys = new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_Q};
+                break;
+            case KeyEvent.KEYCODE_F10:
+                keys = new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_LSHIFT, (short) KeyMapper.VK_Q};
+                break;
+            case KeyEvent.KEYCODE_F11:
+                keys = new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_H};
+                break;
+            case KeyEvent.KEYCODE_F12:
+                keys = new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_L};
+                break;
+            default:
+                return false;
+        }
+
+        // Trigger the shortcut once on key down and consume key up.
+        if (keyEvent.getAction() == KeyEvent.ACTION_DOWN) {
+            Game.instance.sendKeys(keys);
+        }
+
+        return true;
+    }
+
     public void sendMouseMove(int x,int y){
         if (Game.instance == null || !Game.instance.connected) {
             return;
@@ -387,22 +429,34 @@ public class KeyBoardController {
     }
 
     public void vibrate(int action) {
-        if (PreferenceConfiguration.readPreferences(context).enableKeyboardVibrate && vibrator.hasVibrator()) {
-            switch (action) {
-                case KeyEvent.ACTION_DOWN:
-                    frame_layout.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                    break;
-                case KeyEvent.ACTION_UP:
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        frame_layout.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY_RELEASE);
-                    } else {
-                        frame_layout.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                    }
-                    break;
-                default:
-                    frame_layout.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            }
+        if (!vibrator.hasVibrator()) {
+            return;
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        if (!vibrator.areAllPrimitivesSupported(
+                VibrationEffect.Composition.PRIMITIVE_CLICK,
+                VibrationEffect.Composition.PRIMITIVE_TICK,
+                VibrationEffect.Composition.PRIMITIVE_THUD)) {
+            return;
+        }
+
+        VibrationEffect.Composition composition = VibrationEffect.startComposition();
+        switch (action) {
+            case KeyEvent.ACTION_DOWN:
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.75f);
+                break;
+            case KeyEvent.ACTION_UP:
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.9f);
+                break;
+            default:
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_THUD, 0.8f);
+                composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_THUD, 0.55f, 35);
+                break;
+        }
+
+        vibrator.vibrate(composition.compose());
     }
 
     private void showControlButtons(boolean show) {
@@ -513,22 +567,27 @@ public class KeyBoardController {
                 int height = screen.heightPixels;
                 
                 // Calculate button size using the same logic as createDefaultLayout
-                int BUTTON_SIZE = 10;
+                int BUTTON_SIZE = 20;
                 int w = KeyBoardControllerConfigurationLoader.screenScale(BUTTON_SIZE, height);
-                int maxW = screen.widthPixels / 18;
+                int maxW = screen.widthPixels / 12;
 
                 if (w > maxW) {
                     BUTTON_SIZE = KeyBoardControllerConfigurationLoader.screenScaleSwitch(maxW, height);
                     w = KeyBoardControllerConfigurationLoader.screenScale(BUTTON_SIZE, height);
                 }
 
+                Map<String, keyBoardVirtualControllerElement> existingElementsById = new HashMap<>();
                 Set<String> existingElementIds = new HashSet<>();
                 List<Rect> existingPositions = new ArrayList<>();
                 for (keyBoardVirtualControllerElement element : elements) {
+                    if (element == null || TextUtils.isEmpty(element.elementId)) {
+                        continue;
+                    }
+                    existingElementIds.add(element.elementId);
+                    existingElementsById.put(element.elementId, element);
+
                     if (element.getVisibility() != View.GONE) {
-                        // Create a set of existing element IDs for quick lookup
-                        existingElementIds.add(element.elementId);
-                        // Get current element positions to avoid overlap - include ALL elements
+                        // Get current element positions to avoid overlap
                         try {
                             FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) element.getLayoutParams();
                             if (params != null) {
@@ -553,12 +612,17 @@ public class KeyBoardController {
 
                 int elementsAdded = 0;
                 int duplicatesFound = 0;
+                int elementsRestored = 0;
                 // Add selected keys
                 for (int i = 0; i < checkedItems.length; i++) {
                     if (checkedItems[i]) {
                         try {
                             JSONObject obj = allItemsList.get(i);
                             int type = obj.optInt("type", 0);
+                            String name = obj.optString("name");
+                            short[] remappedKeys = (type == 0)
+                                    ? KeyBoardControllerConfigurationLoader.remapFunctionLabelToI3ShortcutKeys(name)
+                                    : null;
 
                             // Determine elementId to check for duplicates
                             String elementId;
@@ -573,10 +637,24 @@ public class KeyBoardController {
                                 }
                             }
 
+                            if (remappedKeys != null) {
+                                elementId = "remap_" + elementId;
+                            }
+
                             // Check for duplicates
                             if (existingElementIds.contains(elementId)) {
+                                keyBoardVirtualControllerElement existingElement = existingElementsById.get(elementId);
+                                if (existingElement != null &&
+                                        (existingElement.hidden || !existingElement.enabled || existingElement.getVisibility() != View.VISIBLE)) {
+                                    existingElement.hidden = false;
+                                    existingElement.enabled = true;
+                                    existingElement.setVisibility(View.VISIBLE);
+                                    elementsRestored++;
+                                    continue;
+                                }
+
                                 duplicatesFound++;
-                                continue; // Skip this key
+                                continue;
                             }
                             
                             // Calculate element size based on type
@@ -588,7 +666,8 @@ public class KeyBoardController {
                             keyBoardVirtualControllerElement newElement = null;
                             
                             if (type == 4) { // Custom Key
-                                String name = obj.getString("name");
+                                name = obj.getString("name");
+                                String displayName = KeyBoardControllerConfigurationLoader.remapFunctionLabelForI3(name);
                                 boolean sticky = obj.getBoolean("sticky");
                                 JSONArray keysJson = obj.getJSONArray("keys");
 
@@ -607,8 +686,10 @@ public class KeyBoardController {
                                     vkKeyCodes[j] = (short) keycode;
                                 }
 
+                                vkKeyCodes = KeyBoardControllerConfigurationLoader.remapSingleFunctionVkForI3(vkKeyCodes);
+
                                 newElement = KeyBoardControllerConfigurationLoader.createCustomButton(
-                                        elementId, vkKeyCodes, 1, name, -1, sticky, this, conn, context
+                                        elementId, vkKeyCodes, 1, displayName, -1, sticky, this, conn, context
                                 );
                                 addElement(newElement, position.x, position.y, w, w);
 
@@ -636,15 +717,18 @@ public class KeyBoardController {
                                 addElement(newElement, position.x, position.y, elementSize, elementSize);
                                 
                             } else {
-                                String name = obj.getString("name");
+                                String displayName = KeyBoardControllerConfigurationLoader.remapFunctionLabelForI3(name);
                                 int code = obj.getInt("code");
 
                                 if (elementId.equals("m_9") || elementId.equals("m_10") || elementId.equals("m_11")) {
                                     newElement = KeyBoardControllerConfigurationLoader.createDigitalTouchButton(
                                         elementId, code, type, 1, name, -1, this, context);
+                                } else if (remappedKeys != null) {
+                                    newElement = KeyBoardControllerConfigurationLoader.createCustomButton(
+                                        elementId, remappedKeys, 1, displayName, -1, false, this, conn, context);
                                 } else {
                                     newElement = KeyBoardControllerConfigurationLoader.createDigitalButton(
-                                        elementId, code, type, 1, name, -1, 
+                                        elementId, code, type, 1, displayName, -1, 
                                         PreferenceConfiguration.readPreferences(context).stickyModifierKey && 
                                         KeyBoardControllerConfigurationLoader.isModifierKey(code), 
                                         this, context);
@@ -658,6 +742,9 @@ public class KeyBoardController {
 
                             // Add the new elementId to the set to prevent adding it twice in the same operation
                             existingElementIds.add(elementId);
+                            if (newElement != null) {
+                                existingElementsById.put(elementId, newElement);
+                            }
                             
                             elementsAdded++;
                             vibrate(KeyEvent.ACTION_DOWN);
@@ -674,9 +761,17 @@ public class KeyBoardController {
                 
                 // Build feedback message
                 StringBuilder feedback = new StringBuilder();
-                if (elementsAdded > 0) {
+                if (elementsAdded > 0 || elementsRestored > 0) {
                     KeyBoardControllerConfigurationLoader.saveProfile(KeyBoardController.this, context);
-                    feedback.append(context.getString(R.string.keyboard_keys_added, elementsAdded));
+                    if (elementsAdded > 0) {
+                        feedback.append(context.getString(R.string.keyboard_keys_added, elementsAdded));
+                    }
+                    if (elementsRestored > 0) {
+                        if (feedback.length() > 0) {
+                            feedback.append("\n");
+                        }
+                        feedback.append("Restored hidden keys: ").append(elementsRestored);
+                    }
                 }
                 if (duplicatesFound > 0) {
                     if (feedback.length() > 0) {

@@ -48,7 +48,12 @@ public class AbsoluteTouchContext implements TouchContext {
 
     private final NvConnection conn;
     private final int actionIndex;
-    private final View targetView;
+    private View targetView;
+    private final boolean hostAbsoluteOffsetEnabled;
+    private final int hostAbsoluteOffsetX;
+    private final int hostAbsoluteOffsetY;
+    private final int hostAbsoluteReferenceWidth;
+    private final int hostAbsoluteReferenceHeight;
     private final Handler handler;
 
     private final Runnable leftButtonUpRunnable = new Runnable() {
@@ -69,11 +74,26 @@ public class AbsoluteTouchContext implements TouchContext {
     private static final int TOUCH_DOWN_DEAD_ZONE_TIME_THRESHOLD = 100;
     private static final int TOUCH_DOWN_DEAD_ZONE_DISTANCE_THRESHOLD = 20;
 
-    public AbsoluteTouchContext(NvConnection conn, int actionIndex, View view, boolean swapped)
+    public AbsoluteTouchContext(
+            NvConnection conn,
+            int actionIndex,
+            View view,
+            boolean swapped,
+            boolean hostAbsoluteOffsetEnabled,
+            int hostAbsoluteOffsetX,
+            int hostAbsoluteOffsetY,
+            int hostAbsoluteReferenceWidth,
+            int hostAbsoluteReferenceHeight
+    )
     {
         this.conn = conn;
         this.actionIndex = actionIndex;
         this.targetView = view;
+        this.hostAbsoluteOffsetEnabled = hostAbsoluteOffsetEnabled;
+        this.hostAbsoluteOffsetX = hostAbsoluteOffsetX;
+        this.hostAbsoluteOffsetY = hostAbsoluteOffsetY;
+        this.hostAbsoluteReferenceWidth = hostAbsoluteReferenceWidth;
+        this.hostAbsoluteReferenceHeight = hostAbsoluteReferenceHeight;
         this.handler = new Handler(Looper.getMainLooper());
 
         if (swapped) {
@@ -83,6 +103,12 @@ public class AbsoluteTouchContext implements TouchContext {
         else {
             buttonPrimary = MouseButtonPacket.BUTTON_LEFT;
             buttonSecondary = MouseButtonPacket.BUTTON_RIGHT;
+        }
+    }
+
+    public void setTargetView(View view) {
+        if (view != null) {
+            this.targetView = view;
         }
     }
 
@@ -119,14 +145,32 @@ public class AbsoluteTouchContext implements TouchContext {
     }
 
     private void updatePosition(int eventX, int eventY) {
+        int localWidth = targetView.getWidth();
+        int localHeight = targetView.getHeight();
+
         // We may get values slightly outside our view region on ACTION_HOVER_ENTER and ACTION_HOVER_EXIT.
         // Normalize these to the view size. We can't just drop them because we won't always get an event
         // right at the boundary of the view, so dropping them would result in our cursor never really
         // reaching the sides of the screen.
-        eventX = Math.min(Math.max(eventX, 0), targetView.getWidth());
-        eventY = Math.min(Math.max(eventY, 0), targetView.getHeight());
+        eventX = Math.min(Math.max(eventX, 0), localWidth);
+        eventY = Math.min(Math.max(eventY, 0), localHeight);
 
-        conn.sendMousePosition((short)eventX, (short)eventY, (short)targetView.getWidth(), (short)targetView.getHeight());
+        int referenceWidth = localWidth;
+        int referenceHeight = localHeight;
+        int sendX = eventX;
+        int sendY = eventY;
+
+        if (hostAbsoluteOffsetEnabled && hostAbsoluteReferenceWidth > 0 && hostAbsoluteReferenceHeight > 0) {
+            sendX += hostAbsoluteOffsetX;
+            sendY += hostAbsoluteOffsetY;
+            referenceWidth = hostAbsoluteReferenceWidth;
+            referenceHeight = hostAbsoluteReferenceHeight;
+
+            sendX = Math.min(Math.max(sendX, 0), referenceWidth);
+            sendY = Math.min(Math.max(sendY, 0), referenceHeight);
+        }
+
+        conn.sendMousePosition((short)sendX, (short)sendY, (short)referenceWidth, (short)referenceHeight);
     }
 
     @Override
