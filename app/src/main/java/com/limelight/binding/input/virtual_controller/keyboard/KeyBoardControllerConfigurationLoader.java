@@ -40,6 +40,20 @@ public class KeyBoardControllerConfigurationLoader {
     public static final String OSC_PREFERENCE_VALUE = "OSC_Keyboard";
 
     private static final Set<Integer> MODIFIER_KEY_CODES = new HashSet<>();
+    private static final BuiltInShortcut[] BUILTIN_I3_SHORTCUTS = new BuiltInShortcut[] {
+            new BuiltInShortcut("i3-Term", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_RETURN}),
+            new BuiltInShortcut("i3-Menu", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_D}),
+            new BuiltInShortcut("i3-Quit", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_Q}),
+            new BuiltInShortcut("i3-Kill", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_LSHIFT, (short) KeyMapper.VK_Q}),
+            new BuiltInShortcut("i3-Left", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_H}),
+            new BuiltInShortcut("i3-Down", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_J}),
+            new BuiltInShortcut("i3-Up", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_K}),
+            new BuiltInShortcut("i3-Right", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_L}),
+            new BuiltInShortcut("i3-SplitV", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_V}),
+            new BuiltInShortcut("i3-SplitH", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_B}),
+            new BuiltInShortcut("i3-Layout", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_E}),
+            new BuiltInShortcut("i3-Resize", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_R}),
+    };
 
     static {
         MODIFIER_KEY_CODES.add(KeyEvent.KEYCODE_ALT_LEFT);
@@ -50,6 +64,59 @@ public class KeyBoardControllerConfigurationLoader {
         MODIFIER_KEY_CODES.add(KeyEvent.KEYCODE_SHIFT_RIGHT);
         MODIFIER_KEY_CODES.add(KeyEvent.KEYCODE_META_LEFT);
         MODIFIER_KEY_CODES.add(KeyEvent.KEYCODE_META_RIGHT);
+    }
+
+    private static class BuiltInShortcut {
+        private final String name;
+        private final short[] keys;
+
+        private BuiltInShortcut(String name, short[] keys) {
+            this.name = name;
+            this.keys = keys;
+        }
+    }
+
+    private static BuiltInShortcut remapFunctionButtonToI3Shortcut(String name) {
+        if (name == null) {
+            return null;
+        }
+
+        switch (name) {
+            case "F1":
+                return new BuiltInShortcut("i3-Q", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_Q});
+            case "F2":
+                return new BuiltInShortcut("i3-D", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_D});
+            case "F3":
+                return new BuiltInShortcut("i3-F", new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_F});
+            default:
+                return null;
+        }
+    }
+
+    private static short[] remapSingleFunctionVkToI3Shortcut(short[] keys) {
+        if (keys == null || keys.length != 1) {
+            return keys;
+        }
+
+        short key = keys[0];
+        if (key == (short) KeyMapper.VK_F1)  return new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_Q};
+        if (key == (short) KeyMapper.VK_F2)  return new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_D};
+        if (key == (short) KeyMapper.VK_F3)  return new short[] {(short) KeyMapper.VK_LWIN, (short) KeyMapper.VK_F};
+        return keys;
+    }
+
+    public static short[] remapSingleFunctionVkForI3(short[] keys) {
+        return remapSingleFunctionVkToI3Shortcut(keys);
+    }
+
+    public static short[] remapFunctionLabelToI3ShortcutKeys(String name) {
+        BuiltInShortcut shortcut = remapFunctionButtonToI3Shortcut(name);
+        return shortcut != null ? shortcut.keys : null;
+    }
+
+    public static String remapFunctionLabelForI3(String name) {
+        BuiltInShortcut shortcut = remapFunctionButtonToI3Shortcut(name);
+        return shortcut != null ? shortcut.name : name;
     }
 
     public static boolean isModifierKey(int keyCode) {
@@ -466,7 +533,16 @@ public class KeyBoardControllerConfigurationLoader {
 
                 int y = screenScale(BUTTON_SIZE + lastIndex * BUTTON_SIZE, height);
 
-                if (TextUtils.equals("m_9", elementId) || TextUtils.equals("m_10", elementId) || TextUtils.equals("m_11", elementId)) {
+                BuiltInShortcut remappedShortcut = remapFunctionButtonToI3Shortcut(name);
+
+                if (remappedShortcut != null) {
+                    controller.addElement(
+                            createCustomButton("remap_" + elementId, remappedShortcut.keys, 1,
+                                    remappedShortcut.name, -1, false, controller, conn, context),
+                            x, y,
+                            w, w
+                    );
+                } else if (TextUtils.equals("m_9", elementId) || TextUtils.equals("m_10", elementId) || TextUtils.equals("m_11", elementId)) {
                     controller.addElement(createDigitalTouchButton(elementId, code, type, 1, name, -1, controller, context),
                             x, y,
                             w, w
@@ -479,6 +555,25 @@ public class KeyBoardControllerConfigurationLoader {
                 }
                 LimeLog.info("x:" + x + ",y:" + y + ",W&H:" + w + "," + screenScale(BUTTON_SIZE, height));
             }
+
+            // Built-in i3 shortcuts
+            for (int idx = 0; idx < BUILTIN_I3_SHORTCUTS.length; idx++) {
+                BuiltInShortcut sc = BUILTIN_I3_SHORTCUTS[idx];
+
+                int absoluteIndex = i + idx;
+                int lastIndex = (int) (absoluteIndex / buttonSum);
+                int x = screenScale(1 + (int) (absoluteIndex % buttonSum) * BUTTON_SIZE, height);
+                int y = screenScale(BUTTON_SIZE + lastIndex * BUTTON_SIZE, height);
+
+                controller.addElement(
+                        createCustomButton("builtin_i3_" + idx, sc.keys, 1,
+                                sc.name, -1, false, controller, conn, context),
+                        x, y,
+                        w, w
+                );
+            }
+
+            i += BUILTIN_I3_SHORTCUTS.length;
 
             // Custom keys
             SharedPreferences preferences = context.getSharedPreferences(GameMenu.PREF_NAME, Activity.MODE_PRIVATE);
@@ -521,6 +616,7 @@ public class KeyBoardControllerConfigurationLoader {
                                 vkKeyCodes[j] = (short) keycode;
                             }
 
+                            vkKeyCodes = remapSingleFunctionVkToI3Shortcut(vkKeyCodes);
                             boolean sticky = sc.sticky;
 
                             int lastIndex = (int) ((idx + i) / buttonSum);

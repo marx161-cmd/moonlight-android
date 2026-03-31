@@ -197,6 +197,23 @@ public class GameMenu implements Game.GameMenuCallbacks {
 
             options.add(new MenuOption(getString(R.string.game_menu_send_keys_alt_b),
                     () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_B})));
+
+            options.add(new MenuOption("i3: Terminal (Win+Enter)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, KeyboardTranslator.VK_RETURN})));
+            options.add(new MenuOption("i3: App Menu (Win+D)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, KeyboardTranslator.VK_D})));
+            options.add(new MenuOption("i3: Quit Session (Win+Shift+E)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, KeyboardTranslator.VK_LSHIFT, (short) KeyMapper.VK_E})));
+            options.add(new MenuOption("i3: Kill Window (Win+Shift+Q)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_Q})));
+            options.add(new MenuOption("i3: Focus Left (Win+H)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, (short) KeyMapper.VK_H})));
+            options.add(new MenuOption("i3: Focus Down (Win+J)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, (short) KeyMapper.VK_J})));
+            options.add(new MenuOption("i3: Focus Up (Win+K)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, (short) KeyMapper.VK_K})));
+            options.add(new MenuOption("i3: Focus Right (Win+L)",
+                    () -> sendKeys(new short[]{KeyboardTranslator.VK_LWIN, (short) KeyMapper.VK_L})));
         }
 
         // Import custom shortcuts

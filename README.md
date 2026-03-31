@@ -2,6 +2,9 @@
 
 Previously named Moonlight Noir
 
+> [!NOTE]
+> This fork is part of a personal hobby-project collection. It is shared because it works for my setup, but it should not be treated as a project with guaranteed regular maintenance, quick issue response, or long-term roadmap commitments.
+
 An open source client for [Apollo](https://github.com/ClassicOldSong/Apollo)/[Sunshine](https://github.com/LizardByte/Sunshine).
 
 Artemis Android will allow you to stream your collection of games from your Windows PC to your Android device,

@@ -2477,11 +2477,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 normalizedY= bean.getLastRelativelyY() +dy;
             }
             if(prefConfig.touchSensitivityRotationAuto){
-                if(normalizedX>= streamContainer.getWidth()){
-                    normalizedX= streamContainer.getWidth()/2.0f;
+                if(normalizedX>= getInputReferenceWidth()){
+                    normalizedX= getInputReferenceWidth()/2.0f;
                 }
-                if(normalizedY>= streamContainer.getHeight()){
-                    normalizedY= streamContainer.getHeight()/2.0f;
+                if(normalizedY>= getInputReferenceHeight()){
+                    normalizedY= getInputReferenceHeight()/2.0f;
                 }
             }
             bean.setLastAbsoluteX(event.getX(pointerIndex));
@@ -2500,6 +2500,85 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
 
+    private View getInputReferenceView() {
+        View surfaceView = streamContainer != null ? streamContainer.getSurfaceView() : null;
+        if (surfaceView != null && surfaceView.getWidth() > 0 && surfaceView.getHeight() > 0) {
+            return surfaceView;
+        }
+        return streamContainer;
+    }
+
+    private int getInputReferenceWidth() {
+        View referenceView = getInputReferenceView();
+        return referenceView != null && referenceView.getWidth() > 0 ? referenceView.getWidth() : streamContainer.getWidth();
+    }
+
+    private int getInputReferenceHeight() {
+        View referenceView = getInputReferenceView();
+        return referenceView != null && referenceView.getHeight() > 0 ? referenceView.getHeight() : streamContainer.getHeight();
+    }
+
+    private int getAbsoluteMouseReferenceWidth() {
+        if (prefConfig.absoluteMouseHostOffsetEnable && prefConfig.absoluteMouseHostReferenceWidth > 0) {
+            return prefConfig.absoluteMouseHostReferenceWidth;
+        }
+        return getInputReferenceWidth();
+    }
+
+    private int getAbsoluteMouseReferenceHeight() {
+        if (prefConfig.absoluteMouseHostOffsetEnable && prefConfig.absoluteMouseHostReferenceHeight > 0) {
+            return prefConfig.absoluteMouseHostReferenceHeight;
+        }
+        return getInputReferenceHeight();
+    }
+
+    private int applyAbsoluteMouseOffsetX(float x) {
+        int eventX = Math.round(x);
+        if (prefConfig.absoluteMouseHostOffsetEnable) {
+            eventX += prefConfig.absoluteMouseHostOffsetX;
+        }
+        int referenceWidth = getAbsoluteMouseReferenceWidth();
+        return Math.min(Math.max(eventX, 0), referenceWidth);
+    }
+
+    private int applyAbsoluteMouseOffsetY(float y) {
+        int eventY = Math.round(y);
+        if (prefConfig.absoluteMouseHostOffsetEnable) {
+            eventY += prefConfig.absoluteMouseHostOffsetY;
+        }
+        int referenceHeight = getAbsoluteMouseReferenceHeight();
+        return Math.min(Math.max(eventY, 0), referenceHeight);
+    }
+
+    private void sendAbsoluteMousePosition(float x, float y) {
+        int sendX = applyAbsoluteMouseOffsetX(x);
+        int sendY = applyAbsoluteMouseOffsetY(y);
+        conn.sendMousePosition((short)sendX, (short)sendY,
+                (short)getAbsoluteMouseReferenceWidth(), (short)getAbsoluteMouseReferenceHeight());
+    }
+
+    private void sendAbsoluteMouseMoveAsPosition(short deltaX, short deltaY) {
+        conn.sendMouseMoveAsMousePosition(
+                deltaX, deltaY,
+                (short)getAbsoluteMouseReferenceWidth(), (short)getAbsoluteMouseReferenceHeight()
+        );
+    }
+
+    private float[] getCoordinatesRelativeToStreamContainer(View touchedView, float viewRelativeX, float viewRelativeY) {
+        View sourceView = touchedView != null ? touchedView : getInputReferenceView();
+        View referenceView = getInputReferenceView();
+        int[] sourceLoc = new int[2];
+        int[] referenceLoc = new int[2];
+
+        sourceView.getLocationOnScreen(sourceLoc);
+        referenceView.getLocationOnScreen(referenceLoc);
+
+        return new float[] {
+                viewRelativeX + sourceLoc[0] - referenceLoc[0],
+                viewRelativeY + sourceLoc[1] - referenceLoc[1]
+        };
+    }
+
     private float[] getStreamViewRelativeNormalizedXY(View view, MotionEvent event, int pointerIndex) {
         float normalizedX = event.getX(pointerIndex);
         float normalizedY = event.getY(pointerIndex);
@@ -2509,22 +2588,18 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             normalizedX=normalized[0];
             normalizedY=normalized[1];
         }
-        // For the containing background view, we must subtract the origin
-        // of the StreamView to get video-relative coordinates.
-        if (view != streamContainer) {
-            float[] normalized = getNormalizedCoordinates(streamContainer, normalizedX, normalizedY);
-            normalizedX = normalized[0];
-            normalizedY = normalized[1];
-        }
+        float[] streamRelative = getCoordinatesRelativeToStreamContainer(view, normalizedX, normalizedY);
+        normalizedX = streamRelative[0];
+        normalizedY = streamRelative[1];
 
         normalizedX = Math.max(normalizedX, 0.0f);
         normalizedY = Math.max(normalizedY, 0.0f);
 
-        normalizedX = Math.min(normalizedX, streamContainer.getWidth());
-        normalizedY = Math.min(normalizedY, streamContainer.getHeight());
+        normalizedX = Math.min(normalizedX, getInputReferenceWidth());
+        normalizedY = Math.min(normalizedY, getInputReferenceHeight());
 
-        normalizedX /= streamContainer.getWidth();
-        normalizedY /= streamContainer.getHeight();
+        normalizedX /= getInputReferenceWidth();
+        normalizedY /= getInputReferenceHeight();
 
         return new float[] { normalizedX, normalizedY };
     }
@@ -2624,10 +2699,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         float[] contactAreaMinorCartesian = polarToCartesian(contactAreaMinor, (float)(orientation + (Math.PI / 2)));
 
         // Normalize the contact area to the stream view size
-        contactAreaMajorCartesian[0] = Math.min(Math.abs(contactAreaMajorCartesian[0]), streamContainer.getWidth()) / streamContainer.getWidth();
-        contactAreaMinorCartesian[0] = Math.min(Math.abs(contactAreaMinorCartesian[0]), streamContainer.getWidth()) / streamContainer.getWidth();
-        contactAreaMajorCartesian[1] = Math.min(Math.abs(contactAreaMajorCartesian[1]), streamContainer.getHeight()) / streamContainer.getHeight();
-        contactAreaMinorCartesian[1] = Math.min(Math.abs(contactAreaMinorCartesian[1]), streamContainer.getHeight()) / streamContainer.getHeight();
+        contactAreaMajorCartesian[0] = Math.min(Math.abs(contactAreaMajorCartesian[0]), getInputReferenceWidth()) / getInputReferenceWidth();
+        contactAreaMinorCartesian[0] = Math.min(Math.abs(contactAreaMinorCartesian[0]), getInputReferenceWidth()) / getInputReferenceWidth();
+        contactAreaMajorCartesian[1] = Math.min(Math.abs(contactAreaMajorCartesian[1]), getInputReferenceHeight()) / getInputReferenceHeight();
+        contactAreaMinorCartesian[1] = Math.min(Math.abs(contactAreaMinorCartesian[1]), getInputReferenceHeight()) / getInputReferenceHeight();
 
         // Convert the normalized values back into polar coordinates
         return new float[] { cartesianToR(contactAreaMajorCartesian), cartesianToR(contactAreaMinorCartesian) };
@@ -2830,7 +2905,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         if (prefConfig.absoluteMouseMode) {
                             // NB: view may be null, but we can unconditionally use streamView because we don't need to adjust
                             // relative axis deltas for the position of the streamView within the parent's coordinate system.
-                            conn.sendMouseMoveAsMousePosition(deltaX, deltaY, (short) streamContainer.getWidth(), (short) streamContainer.getHeight());
+                            sendAbsoluteMouseMoveAsPosition(deltaX, deltaY);
                         }
                         else {
                             conn.sendMouseMove(deltaX, deltaY);
@@ -2857,8 +2932,27 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
                             // Touchpads must be smaller than (65535, 65535)
                             if (xMax <= Short.MAX_VALUE && yMax <= Short.MAX_VALUE) {
-                                conn.sendMousePosition((short)event.getX(), (short)event.getY(),
-                                        (short)xMax, (short)yMax);
+                                int rawX = (int)event.getX();
+                                int rawY = (int)event.getY();
+                                int sendX = rawX;
+                                int sendY = rawY;
+                                int refW = xMax;
+                                int refH = yMax;
+
+                                if (prefConfig.absoluteMouseHostOffsetEnable &&
+                                        prefConfig.absoluteMouseHostReferenceWidth > 0 &&
+                                        prefConfig.absoluteMouseHostReferenceHeight > 0) {
+                                    sendX = rawX + prefConfig.absoluteMouseHostOffsetX;
+                                    sendY = rawY + prefConfig.absoluteMouseHostOffsetY;
+                                    refW = prefConfig.absoluteMouseHostReferenceWidth;
+                                    refH = prefConfig.absoluteMouseHostReferenceHeight;
+                                }
+
+                                sendX = Math.min(Math.max(sendX, 0), refW);
+                                sendY = Math.min(Math.max(sendY, 0), refH);
+
+                                conn.sendMousePosition((short)sendX, (short)sendY,
+                                        (short)refW, (short)refH);
                             }
                         }
                     }
@@ -2875,13 +2969,13 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && event.getClassification() == MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE) {
                             if (!pointerSwiping) {
                                 pointerSwiping = true;
-                                handleTouchInput(event, trackpadContextMap, false, prefConfig.trackpadSwapAxis, MotionEvent.ACTION_POINTER_DOWN, 1, 2);
+                                handleTouchInput(view, event, trackpadContextMap, false, prefConfig.trackpadSwapAxis, MotionEvent.ACTION_POINTER_DOWN, 1, 2);
                             }
-                            return handleTouchInput(event, trackpadContextMap, false, prefConfig.trackpadSwapAxis, MotionEvent.ACTION_MOVE, 1, 2);
+                            return handleTouchInput(view, event, trackpadContextMap, false, prefConfig.trackpadSwapAxis, MotionEvent.ACTION_MOVE, 1, 2);
                         } else if (pointerSwiping && eventAction == MotionEvent.ACTION_UP) {
                             pointerSwiping = false;
                             synthClickPending = false;
-                            handleTouchInput(event, trackpadContextMap, false, prefConfig.trackpadSwapAxis, MotionEvent.ACTION_POINTER_UP, 1, 2);
+                            handleTouchInput(view, event, trackpadContextMap, false, prefConfig.trackpadSwapAxis, MotionEvent.ACTION_POINTER_UP, 1, 2);
                             return true;
                         }
 
@@ -3063,7 +3157,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             // This case is for fingers
             else {
                 if (eventSource == InputDevice.SOURCE_TOUCHPAD) {
-                    return handleTouchInput(event, trackpadContextMap, false);
+                    return handleTouchInput(view, event, trackpadContextMap, false);
                 } else {
                     if (virtualController != null &&
                             (virtualController.getControllerMode() == VirtualController.ControllerMode.MoveButtons ||
@@ -3106,7 +3200,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         return true;
                     }
 
-                    return handleTouchInput(event, touchContextMap, true);
+                    return handleTouchInput(view, event, touchContextMap, true);
                 }
             }
 
@@ -3118,15 +3212,24 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         return false;
     }
 
-    private boolean handleTouchInput(MotionEvent event, TouchContext[] inputContextMap, boolean isTouchScreen) {
+    private boolean handleTouchInput(View touchedView, MotionEvent event, TouchContext[] inputContextMap, boolean isTouchScreen) {
         // Actual invert logic is handled within the touch context
-        return handleTouchInput(event, inputContextMap, isTouchScreen, false, event.getActionMasked(), event.getActionIndex(), event.getPointerCount());
+        return handleTouchInput(touchedView, event, inputContextMap, isTouchScreen, false, event.getActionMasked(), event.getActionIndex(), event.getPointerCount());
     }
 
-    private boolean handleTouchInput(MotionEvent event, TouchContext[] inputContextMap, boolean isTouchScreen, boolean invertAxis, int eventAction, int actionIndex, int pointerCount) {
+    private boolean handleTouchInput(View touchedView, MotionEvent event, TouchContext[] inputContextMap, boolean isTouchScreen, boolean invertAxis, int eventAction, int actionIndex, int pointerCount) {
         TouchContext context = getTouchContext(actionIndex, inputContextMap);
         if (context == null) {
             return false;
+        }
+
+        if (isTouchScreen) {
+            View referenceView = getInputReferenceView();
+            for (TouchContext touchContext : inputContextMap) {
+                if (touchContext instanceof AbsoluteTouchContext) {
+                    ((AbsoluteTouchContext) touchContext).setTargetView(referenceView);
+                }
+            }
         }
 
         int actualActionIndex = event.getActionIndex();
@@ -3147,9 +3250,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         int historicalX = (int)event.getHistoricalX(aActionIndex, i);
                         int historicalY = (int)event.getHistoricalY(aActionIndex, i);
                         if (isTouchScreen) {
-                            float[] normalizedCoords = getNormalizedCoordinates(streamContainer, historicalX, historicalY);
-                            historicalX = (int)normalizedCoords[0];
-                            historicalY = (int)normalizedCoords[1];
+                            float[] streamCoords = getCoordinatesRelativeToStreamContainer(touchedView, historicalX, historicalY);
+                            historicalX = (int)streamCoords[0];
+                            historicalY = (int)streamCoords[1];
                         }
 
                         // Invert axis again since synthetic events are not inverted
@@ -3182,9 +3285,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     int currentX = (int)event.getX(aActionIndex);
                     int currentY = (int)event.getY(aActionIndex);
                     if (isTouchScreen) {
-                        float[] normalizedCoords = getNormalizedCoordinates(streamContainer, currentX, currentY);
-                        currentX = (int)normalizedCoords[0];
-                        currentY = (int)normalizedCoords[1];
+                        float[] streamCoords = getCoordinatesRelativeToStreamContainer(touchedView, currentX, currentY);
+                        currentX = (int)streamCoords[0];
+                        currentY = (int)streamCoords[1];
                     }
 
                     // Invert axis again since synthetic events are not inverted
@@ -3211,9 +3314,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         // Handle view scaling
         if (isTouchScreen) {
-            float[] normalizedCoords = getNormalizedCoordinates(streamContainer, eventX, eventY);
-            eventX = (int)normalizedCoords[0];
-            eventY = (int)normalizedCoords[1];
+            float[] streamCoords = getCoordinatesRelativeToStreamContainer(touchedView, eventX, eventY);
+            eventX = (int)streamCoords[0];
+            eventY = (int)streamCoords[1];
         }
 
         switch (eventAction)
@@ -3262,9 +3365,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     int pointer1X = (int)event.getX(1);
                     int pointer1Y = (int)event.getY(1);
                     if (isTouchScreen) {
-                        float[] normalizedCoords = getNormalizedCoordinates(streamContainer, pointer1X, pointer1Y);
-                        pointer1X = (int)normalizedCoords[0];
-                        pointer1Y = (int)normalizedCoords[1];
+                        float[] streamCoords = getCoordinatesRelativeToStreamContainer(touchedView, pointer1X, pointer1Y);
+                        pointer1X = (int)streamCoords[0];
+                        pointer1Y = (int)streamCoords[1];
                     }
                     context.touchDownEvent(
                             pointer1X,
@@ -3351,19 +3454,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     private void updateMousePosition(View touchedView, MotionEvent event) {
-        // X and Y are already relative to the provided view object
-        float eventX, eventY;
-        // For our StreamView itself, we can use the coordinates unmodified.
-
-        if (touchedView == streamContainer) {
-            eventX = event.getX(0);
-            eventY = event.getY(0);
-        } else {
-            // For the containing background view, we must subtract the origin
-            // of the StreamView to get video-relative coordinates.
-            eventX = event.getX(0) - streamContainer.getX();
-            eventY = event.getY(0) - streamContainer.getY();
-        }
+        float[] streamCoords = getCoordinatesRelativeToStreamContainer(touchedView, event.getX(0), event.getY(0));
+        float eventX = streamCoords[0];
+        float eventY = streamCoords[1];
 
         if (event.getPointerCount() == 1 && event.getActionIndex() == 0 &&
                 (event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER ||
@@ -3396,10 +3489,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         // Normalize these to the view size. We can't just drop them because we won't always get an event
         // right at the boundary of the view, so dropping them would result in our cursor never really
         // reaching the sides of the screen.
-        eventX = Math.min(Math.max(eventX, 0), streamContainer.getWidth());
-        eventY = Math.min(Math.max(eventY, 0), streamContainer.getHeight());
+        eventX = Math.min(Math.max(eventX, 0), getInputReferenceWidth());
+        eventY = Math.min(Math.max(eventY, 0), getInputReferenceHeight());
 
-        conn.sendMousePosition((short)eventX, (short)eventY, (short) streamContainer.getWidth(), (short) streamContainer.getHeight());
+        sendAbsoluteMousePosition(eventX, eventY);
     }
 
     @Override
@@ -4179,7 +4272,14 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 // Touch mouse disabled
                 touchContextMap[i] = null;
             } else if (!prefConfig.touchscreenTrackpad) {
-                touchContextMap[i] = new AbsoluteTouchContext(conn, i, streamContainer, mode == 5);
+                touchContextMap[i] = new AbsoluteTouchContext(
+                        conn, i, getInputReferenceView(), mode == 5,
+                        prefConfig.absoluteMouseHostOffsetEnable,
+                        prefConfig.absoluteMouseHostOffsetX,
+                        prefConfig.absoluteMouseHostOffsetY,
+                        getAbsoluteMouseReferenceWidth(),
+                        getAbsoluteMouseReferenceHeight()
+                );
             } else if (mode == 3) {
                 touchContextMap[i] = new RelativeTouchContext(conn, i, REFERENCE_HORIZ_RES, REFERENCE_VERT_RES, streamContainer, prefConfig);
             } else {
