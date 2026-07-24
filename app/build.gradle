@@ -40,7 +40,7 @@ android {
                     "obtainium_app_url",
                     "data:text/html;base64,PGgxPlJvb3QgYnVpbGQgaXMgbm90IGF2YWlsYWJsZTwvaDE+"
 
-            applicationId "com.limelight.root"
+            applicationId "com.termux.diana.root"
             dimension "root"
             buildConfigField "boolean", "ROOT_BUILD", "true"
         }
@@ -56,7 +56,7 @@ android {
                     "obtainium_app_url",
                     "https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.limelight.noir%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FClassicOldSong%2Fmoonlight-android%22%2C%22author%22%3A%22ClassicOldSong%22%2C%22name%22%3A%22Artemis%22%2C%22additionalSettings%22%3A%22%7B%5C%22apkFilterRegEx%5C%22%3A%5C%22nonRoot%5C%22%2C%5C%22matchGroutToUse%5C%22%3A%5C%22%241%5C%22%2C%5C%22versionExtractionRegEx%5C%22%3A%5C%22v(.%2B)%5C%22%7D%22%7D"
 
-            applicationId "com.limelight"
+            applicationId "com.termux.diana"
             dimension "root"
             buildConfigField "boolean", "ROOT_BUILD", "false"
         }
@@ -93,15 +93,38 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            keyAlias = providers.gradleProperty("TERMUX_KEY_ALIAS").get()
+            keyPassword = providers.gradleProperty("TERMUX_KEY_PASSWORD").get()
+            storePassword = providers.gradleProperty("TERMUX_STORE_PASSWORD").get()
+            storeFile = providers.gradleProperty("TERMUX_KEYSTORE").map { file(it) }.get()
+        }
+    }
     buildTypes {
         debug {
             applicationIdSuffix ".noirdebug"
             resValue "string", "app_label", "Diana"
             resValue "string", "app_label_root", "Diana (Root)"
             resValue "string", "app_label_game", "Diana (Game)"
+            buildConfigField "boolean", "TOP_CENTER_DEFAULT", "false"
 
             minifyEnabled true
+                        signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        debugTop {
+            initWith debug
+            applicationIdSuffix ".noirdebugtop"
+            resValue "string", "app_label", "Diana Top"
+            resValue "string", "app_label_root", "Diana Top (Root)"
+            resValue "string", "app_label_game", "Diana Top (Game)"
+            buildConfigField "boolean", "TOP_CENTER_DEFAULT", "true"
+
+            minifyEnabled false
+                        signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            matchingFallbacks = ['debug']
         }
         release {
             // To whomever is releasing/using an APK in release mode with
@@ -135,11 +158,13 @@ android {
             //
             // TL;DR: Leave the following line alone!
             applicationIdSuffix ".noir"
-            resValue "string", "app_label", "Artemis"
-            resValue "string", "app_label_root", "Artemis (Root)"
-            resValue "string", "app_label_game", "Artemis (Game)"
+            resValue "string", "app_label", "Diana"
+            resValue "string", "app_label_root", "Diana (Root)"
+            resValue "string", "app_label_game", "Diana (Game)"
+            buildConfigField "boolean", "TOP_CENTER_DEFAULT", "false"
 
             minifyEnabled true
+                        signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
