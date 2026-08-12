@@ -1,0 +1,184 @@
+package com.limelight.overlay;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.ServiceInfo;
+import android.os.Build;
+import android.os.IBinder;
+import android.util.Log;
+
+import com.limelight.preferences.PreferenceConfiguration;
+import com.limelight.preferences.GlPreferences;
+import com.limelight.binding.video.MediaCodecHelper;
+import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.computers.ComputerDatabaseManager;
+
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.io.ByteArrayInputStream;
+import android.util.Base64;
+
+import java.security.cert.X509Certificate;
+
+public class ArtemisDaemonService extends Service {
+
+    private static final String CHANNEL_ID = "artemisd_channel";
+    private static final int NOTIFICATION_ID = 0xd1;
+
+    public static final String ACTION_SHOW = "com.termux.diana.action.OVERLAY_SHOW";
+    public static final String ACTION_HIDE = "com.termux.diana.action.OVERLAY_HIDE";
+    public static final String ACTION_TOGGLE = "com.termux.diana.action.OVERLAY_TOGGLE";
+    public static final String ACTION_STOP = "com.termux.diana.action.OVERLAY_STOP";
+
+    private ArtemisOverlayWindow mOverlay;
+    private StreamController mStream;
+    private ArtemisConfig mConfig;
+    private boolean mVisible;
+
+    @Override public IBinder onBind(Intent i) { return null; }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createNotificationChannel();
+        String glRenderer = GlPreferences.readPreferences(this).glRenderer;
+        MediaCodecHelper.initialize(this, glRenderer);
+        mConfig = ArtemisConfig.load();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startForeground();
+        if (mOverlay == null) {
+            mOverlay = new ArtemisOverlayWindow();
+            mOverlay.create(this);
+        }
+        String action = intent != null ? intent.getAction() : null;
+        if (ACTION_STOP.equals(action)) { stopSelf(); return START_NOT_STICKY; }
+        if (action != null) handleAction(action);
+        return START_STICKY;
+    }
+
+    private void handleAction(String action) {
+        switch (action) {
+            case ACTION_SHOW:  showOverlay(); break;
+            case ACTION_HIDE:  hideOverlay(); break;
+            case ACTION_TOGGLE:
+                if (mVisible) hideOverlay(); else showOverlay();
+                break;
+        }
+    }
+
+    private void showOverlay() {
+        if (mVisible) return;
+        mVisible = true;
+        mOverlay.setVisible(true);
+
+        if (mStream == null) {
+            Log.e("ArtemisDaemon", "creating StreamController...");
+            PreferenceConfiguration prefs = PreferenceConfiguration.readPreferences(this);
+
+            // Resolve stream resolution from the actual display, not a stale config value
+            int displayWidth = 1080, displayHeight = 2410;
+            try {
+                android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                displayWidth = dm.widthPixels;
+                displayHeight = dm.heightPixels;
+            } catch (Exception ignored) {}
+
+            prefs.width = displayWidth;
+            prefs.height = displayHeight;
+            prefs.fps = mConfig.fps;
+            prefs.bitrate = mConfig.bitrate;
+            prefs.playHostAudio = mConfig.audioEnabled;
+            Log.e("ArtemisDaemon", "stream resolution: " + displayWidth + "x" + displayHeight);
+
+            ComputerDetails.AddressTuple host =
+                    new ComputerDetails.AddressTuple(mConfig.host, mConfig.port);
+
+            // Read uniqueId from Diana's files (written by IdentityManager)
+            String uniqueId = "0123456789ABCDEF";
+            try {
+                java.io.File f = new java.io.File(getFilesDir(), "uniqueid");
+                java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f));
+                uniqueId = r.readLine().trim();
+                r.close();
+            } catch (Exception e) {
+                Log.e("ArtemisDaemon", "Failed to read uniqueid", e);
+            }
+
+            // Build server cert from config or existing DB
+            X509Certificate serverCert = getServerCert();
+
+            mStream = new StreamController(this, prefs, host,
+                    mConfig.httpsPort, uniqueId, serverCert,
+                    mConfig.appId, mConfig.appName, mConfig.appUuid);
+        }
+
+        if (mOverlay.isSurfaceReady()) {
+            mStream.setRenderTarget(mOverlay.getSurfaceView().getHolder().getSurface());
+            mStream.connect();
+            mStream.setTargetFps(mConfig.fps);
+            // Wire input once the stream is connected
+            if (mStream.getInputHandler() != null) {
+                mOverlay.setInputHandler(mStream.getInputHandler());
+            }
+        }
+    }
+
+    private void hideOverlay() {
+        if (!mVisible) return;
+        mVisible = false;
+        mOverlay.setVisible(false);
+        if (mStream != null) mStream.setTargetFps(1);
+    }
+
+    @Override public void onDestroy() {
+        if (mStream != null) { mStream.disconnect(); mStream = null; }
+        if (mOverlay != null) { mOverlay.destroy(); mOverlay = null; }
+        stopForeground(true);
+        super.onDestroy();
+    }
+
+    private void startForeground() {
+        Notification n = new Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("Artemis Daemon")
+                .setContentText("Streaming service running")
+                .setSmallIcon(com.limelight.R.drawable.ic_computer)
+                .setOngoing(true).build();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        else startForeground(NOTIFICATION_ID, n);
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel ch = new NotificationChannel(CHANNEL_ID,
+                "Artemis Streaming", NotificationManager.IMPORTANCE_LOW);
+        ch.setDescription("Persistent notification for artemisd daemon");
+        getSystemService(NotificationManager.class).createNotificationChannel(ch);
+    }
+
+    private X509Certificate getServerCert() {
+        if (mConfig.serverCertBase64 != null) {
+            try {
+                byte[] der = android.util.Base64.decode(mConfig.serverCertBase64, android.util.Base64.DEFAULT);
+                return (X509Certificate) CertificateFactory.getInstance("X.509")
+                        .generateCertificate(new ByteArrayInputStream(der));
+            } catch (Exception e) {
+                Log.e("ArtemisDaemon", "Failed to decode config cert", e);
+            }
+        }
+        try {
+            ComputerDatabaseManager db = new ComputerDatabaseManager(this);
+            for (ComputerDetails c : db.getAllComputers()) {
+                if (c.serverCert != null) return c.serverCert;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+}

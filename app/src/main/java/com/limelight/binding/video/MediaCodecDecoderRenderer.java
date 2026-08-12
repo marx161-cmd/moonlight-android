@@ -194,7 +194,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int numFramesIn;
     private int numFramesOut;
 
-    private int targetFps = 0;
+    private volatile int targetFps = 0;
 
     private MediaCodecInfo findAvcDecoder() {
         MediaCodecInfo decoder = MediaCodecHelper.findProbableSafeDecoder("video/avc", MediaCodecInfo.CodecProfileLevel.AVCProfileHigh);
@@ -363,13 +363,22 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
-                                     CrashListener crashListener, int consecutiveCrashCount,
-                                     boolean meteredData, boolean requestedHdr, boolean invertResolution,
-                                     String glRenderer, PerfOverlayListener perfListener) {
+                                      CrashListener crashListener, int consecutiveCrashCount,
+                                      boolean meteredData, boolean requestedHdr, boolean invertResolution,
+                                      String glRenderer, PerfOverlayListener perfListener) {
+        this((android.content.Context) activity, prefs, crashListener, consecutiveCrashCount,
+                meteredData, requestedHdr, invertResolution, glRenderer, perfListener);
+        this.activity = activity;
+    }
+
+    public MediaCodecDecoderRenderer(android.content.Context context, PreferenceConfiguration prefs,
+                                      CrashListener crashListener, int consecutiveCrashCount,
+                                      boolean meteredData, boolean requestedHdr, boolean invertResolution,
+                                      String glRenderer, PerfOverlayListener perfListener) {
         //dumpDecoders();
 
-        this.context = activity;
-        this.activity = activity;
+        this.context = context;
+        this.activity = null;
         this.prefs = prefs;
         this.crashListener = crashListener;
         this.consecutiveCrashCount = consecutiveCrashCount;
@@ -2421,6 +2430,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         } catch (Throwable t) {
             // best-effort
         }
+    }
+
+    public void setTargetFps(int fps) {
+        this.targetFps = fps;
+        applySurfaceFrameRate(renderTarget, fps);
     }
 
 

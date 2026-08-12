@@ -46,3 +46,6 @@
 # MPAndroidChart
 -keep class com.github.mikephil.charting.** { *; }
 -dontwarn com.github.mikephil.charting.**
+
+# Artemis daemon overlay classes — keep for manifest-referenced Service
+-keep class com.limelight.overlay.** { *; }

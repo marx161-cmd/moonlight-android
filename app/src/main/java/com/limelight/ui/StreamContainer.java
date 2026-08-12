@@ -15,6 +15,7 @@ import android.widget.FrameLayout;
 
 import com.limelight.Game;
 import com.limelight.LimeLog;
+import com.limelight.overlay.SurfaceCallback;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.Stereo3DRenderer;
 
@@ -40,6 +41,7 @@ public class StreamContainer extends FrameLayout implements SurfaceHolder.Callba
     }
 
     private Game game;
+    private SurfaceCallback mSurfaceCallback;
     private PreferenceConfiguration prefConfig;
     private Stereo3DRenderer mStereoRenderer;
 
@@ -63,11 +65,20 @@ public class StreamContainer extends FrameLayout implements SurfaceHolder.Callba
     }
 
     public void init(Game game, PreferenceConfiguration prefConfig) {
-        if (this.game != null) {
+        init((Object)game, prefConfig);
+        this.game = game;
+    }
+
+    public void init(SurfaceCallback callback, PreferenceConfiguration prefConfig) {
+        init((Object)callback, prefConfig);
+        this.mSurfaceCallback = callback;
+    }
+
+    private void init(Object owner, PreferenceConfiguration prefConfig) {
+        if (this.prefConfig != null) {
             return;
         }
 
-        this.game = game;
         this.prefConfig = prefConfig;
         this.renderMode = mapIntToStreamMode(prefConfig.renderMode);
 
@@ -234,7 +245,8 @@ public class StreamContainer extends FrameLayout implements SurfaceHolder.Callba
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-        game.surfaceCreated(holder);
+        if (mSurfaceCallback != null) mSurfaceCallback.surfaceCreated(holder);
+        else if (game != null) game.surfaceCreated(holder);
     }
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
@@ -243,7 +255,8 @@ public class StreamContainer extends FrameLayout implements SurfaceHolder.Callba
             notifySurfaceReady();
         }
 
-        game.surfaceChanged(holder, format, width, height);
+        if (mSurfaceCallback != null) mSurfaceCallback.surfaceChanged(holder, format, width, height);
+        else if (game != null) game.surfaceChanged(holder, format, width, height);
     }
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
@@ -254,7 +267,8 @@ public class StreamContainer extends FrameLayout implements SurfaceHolder.Callba
             mStereoRenderer.onSurfaceDestroyed();
         }
 
-        game.surfaceDestroyed(holder);
+        if (mSurfaceCallback != null) mSurfaceCallback.surfaceDestroyed(holder);
+        else if (game != null) game.surfaceDestroyed(holder);
     }
 
     @Override
