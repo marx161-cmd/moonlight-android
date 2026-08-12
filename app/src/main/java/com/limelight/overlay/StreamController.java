@@ -5,7 +5,6 @@ import android.view.Surface;
 
 import com.limelight.LimeLog;
 import com.limelight.binding.PlatformBinding;
-import com.limelight.binding.audio.AndroidAudioRenderer;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.NvConnectionListener;
@@ -110,7 +109,9 @@ public class StreamController implements NvConnectionListener {
 
         mDecoder.setRenderTarget(mRenderTarget);
 
-        AndroidAudioRenderer audio = new AndroidAudioRenderer(mContext, mPrefConfig.playHostAudio);
+        // Never open an AudioTrack on the phone: the low-latency track pins the AoC
+        // audio DSP. Discard host audio entirely.
+        NoAudioRenderer audio = new NoAudioRenderer();
         mConnectionStarted = true;
 
         mConnection.start(audio, mDecoder, this);
