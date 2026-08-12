@@ -101,12 +101,18 @@ public class ArtemisDaemonService extends Service {
             Log.e("ArtemisDaemon", "creating StreamController...");
             PreferenceConfiguration prefs = PreferenceConfiguration.readPreferences(this);
 
-            // Resolve stream resolution from the actual display, not a stale config value
+            // Resolve stream resolution from the REAL display size (incl. system-bar
+            // regions). getResources().getDisplayMetrics() returns the non-decor area
+            // (e.g. 2360 instead of 2410), which would size the stream smaller than the
+            // full-screen overlay window and misalign it (gap at bottom / overlap top).
             int displayWidth = 1080, displayHeight = 2410;
             try {
-                android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-                displayWidth = dm.widthPixels;
-                displayHeight = dm.heightPixels;
+                android.view.WindowManager wm =
+                        (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+                android.graphics.Point real = new android.graphics.Point();
+                wm.getDefaultDisplay().getRealSize(real);
+                displayWidth = real.x;
+                displayHeight = real.y;
             } catch (Exception ignored) {}
 
             prefs.width = displayWidth;

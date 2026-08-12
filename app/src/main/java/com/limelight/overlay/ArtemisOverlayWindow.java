@@ -58,9 +58,15 @@ public class ArtemisOverlayWindow {
             }
         });
 
+        // Use the REAL display size (incl. the status/nav bar regions), not
+        // MATCH_PARENT — the window manager clips an overlay's MATCH_PARENT to the
+        // non-decor area (leaving a nav-bar gap at the bottom and letting the status
+        // bar overlap the top). Explicit full size + immersive below covers it all.
+        android.graphics.Point real = new android.graphics.Point();
+        mWindowManager.getDefaultDisplay().getRealSize(real);
+
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
+                real.x, real.y,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                         : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY,
@@ -70,12 +76,20 @@ public class ArtemisOverlayWindow {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
         );
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        }
 
         params.gravity = Gravity.TOP | Gravity.LEFT;
         params.x = 0;
         params.y = 0;
 
         mWindowManager.addView(mRootView, params);
+
+        // Immersive: hide the status + nav bars so they don't overlap the stream at
+        // the edges. Sticky so a system-gesture peek re-hides them.
+        applyImmersive();
 
         // System gesture exclusion for full-screen overlay
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -132,6 +146,17 @@ public class ArtemisOverlayWindow {
         if (mSurfaceReady && r != null) r.run();
     }
 
+    private void applyImmersive() {
+        if (mRootView == null) return;
+        mRootView.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
     private void requestCapture() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && mRootView != null) {
             try { mRootView.requestPointerCapture(); } catch (Exception ignored) {}
@@ -165,6 +190,7 @@ public class ArtemisOverlayWindow {
             mWindowManager.updateViewLayout(mRootView, params);
             mRootView.setAlpha(1.0f);
             mRootView.requestFocus();
+            applyImmersive();
             hideIme();
             // Pointer capture must be (re)requested once focus has actually landed.
             mRootView.post(this::requestCapture);
