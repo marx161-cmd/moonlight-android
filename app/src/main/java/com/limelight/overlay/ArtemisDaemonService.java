@@ -118,7 +118,9 @@ public class ArtemisDaemonService extends Service {
             prefs.width = displayWidth;
             prefs.height = displayHeight;
             prefs.fps = mConfig.fps;
-            prefs.bitrate = mConfig.bitrate;
+            // Config bitrate is in Mbps (user-friendly); StreamConfiguration wants
+            // Kbps. Passing it raw (e.g. 40) meant 40 Kbps -> whole stream macroblocked.
+            prefs.bitrate = mConfig.bitrate * 1000;
             prefs.playHostAudio = mConfig.audioEnabled;
             Log.e("ArtemisDaemon", "stream resolution: " + displayWidth + "x" + displayHeight);
 
