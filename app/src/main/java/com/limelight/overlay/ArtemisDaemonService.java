@@ -28,7 +28,56 @@ import android.util.Base64;
 
 import java.security.cert.X509Certificate;
 
-public class ArtemisDaemonService extends Service implements GameInputController.Host {
+public class ArtemisDaemonService extends Service
+        implements GameInputController.Host, ArtemisGestureRecognizer.Host {
+
+    // --- ArtemisGestureRecognizer.Host: map recognized gestures to comrade actions.
+    // Back/home/anchor-drag. Tune the exact host bindings (VK codes / i3 keybinds) here.
+    private com.limelight.nvstream.NvConnection conn() {
+        return mStream != null ? mStream.getConnection() : null;
+    }
+
+    @Override public void onEdgeBack(boolean fromLeft) {
+        com.limelight.nvstream.NvConnection c = conn();
+        if (c == null) return;
+        // Left edge -> mouse "back" (X1); right edge -> "forward" (X2).
+        byte btn = fromLeft
+                ? com.limelight.nvstream.input.MouseButtonPacket.BUTTON_X1
+                : com.limelight.nvstream.input.MouseButtonPacket.BUTTON_X2;
+        c.sendMouseButtonDown(btn);
+        c.sendMouseButtonUp(btn);
+    }
+
+    @Override public void onBottomHome() {
+        com.limelight.nvstream.NvConnection c = conn();
+        if (c == null) return;
+        // TODO tune: Super+Tab (i3 workspace/window cycle). VK_TAB=0x09, Meta held.
+        final short VK_TAB = 0x09;
+        c.sendKeyboardInput(VK_TAB, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN,
+                com.limelight.nvstream.input.KeyboardPacket.MODIFIER_META, (byte) 0);
+        c.sendKeyboardInput(VK_TAB, com.limelight.nvstream.input.KeyboardPacket.KEY_UP,
+                com.limelight.nvstream.input.KeyboardPacket.MODIFIER_META, (byte) 0);
+    }
+
+    @Override public void onAnchorDragStart() {
+        com.limelight.nvstream.NvConnection c = conn();
+        if (c == null) return;
+        // Hold Super (i3 Mod) so the second-finger drag moves/resizes the window. VK_LWIN=0x5B.
+        final short VK_LWIN = 0x5B;
+        c.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, (byte) 0, (byte) 0);
+    }
+
+    @Override public void onAnchorDragMove(float dx, float dy) {
+        com.limelight.nvstream.NvConnection c = conn();
+        if (c != null) c.sendMouseMove((short) dx, (short) dy);
+    }
+
+    @Override public void onAnchorDragEnd() {
+        com.limelight.nvstream.NvConnection c = conn();
+        if (c == null) return;
+        final short VK_LWIN = 0x5B;
+        c.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, (byte) 0, (byte) 0);
+    }
 
     // Three-finger tap in the stream toggles the soft keyboard (SpectreBoard),
     // four-finger tap does the same "full" keyboard. Wired from GameInputController's
@@ -72,6 +121,7 @@ public class ArtemisDaemonService extends Service implements GameInputController
     private StreamController mStream;
     private ArtemisConfig mConfig;
     private GameInputController mInputController;
+    private ArtemisGestureRecognizer mGestureRecognizer;
     private boolean mVisible;
 
     @Override public IBinder onBind(Intent i) { return null; }
@@ -207,6 +257,17 @@ public class ArtemisDaemonService extends Service implements GameInputController
         mInputController.setReferenceView(mOverlay.getRootView());
         mInputController.setGrabbedInput(true);
         mOverlay.setInputController(mInputController);
+        // Gesture recognizer (edge-back / bottom-home / anchor-drag) runs as a touch
+        // pre-filter. Built once; sized to the real display.
+        if (mGestureRecognizer == null) {
+            float density = getResources().getDisplayMetrics().density;
+            android.view.WindowManager wm = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+            android.graphics.Point real = new android.graphics.Point();
+            wm.getDefaultDisplay().getRealSize(real);
+            mGestureRecognizer = new ArtemisGestureRecognizer(
+                    this, mOverlay.getRootView(), density, real.x, real.y);
+        }
+        mOverlay.setGestureRecognizer(mGestureRecognizer);
         // Grab focus + show only now that video is actually coming up.
         mOverlay.setVisible(true);
         // Overlay is a remote-pointer surface: route vol keys to gyro/click on comrade.

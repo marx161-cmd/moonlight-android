@@ -28,6 +28,7 @@ public class ArtemisOverlayWindow {
     private boolean mSurfaceReady;
     private boolean mVisible;
     private GameInputController mInputController;
+    private ArtemisGestureRecognizer mGestureRecognizer;
     private Runnable mOnSurfaceReady;
 
     public void create(Context context) {
@@ -120,6 +121,11 @@ public class ArtemisOverlayWindow {
         });
 
         mRootView.setOnTouchListener((v, event) -> {
+            // Gesture recognizer runs first; if it takes the gesture, don't also
+            // forward those touches to the stream (avoids double-fire).
+            if (mGestureRecognizer != null && mGestureRecognizer.onTouch(event)) {
+                return true;
+            }
             if (mInputController == null) return false;
             return mInputController.handleMotionEvent(v, event);
         });
@@ -145,6 +151,10 @@ public class ArtemisOverlayWindow {
 
     public void setInputController(GameInputController controller) {
         mInputController = controller;
+    }
+
+    public void setGestureRecognizer(ArtemisGestureRecognizer r) {
+        mGestureRecognizer = r;
     }
 
     public void setOnSurfaceReadyListener(Runnable r) {
