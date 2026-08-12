@@ -163,16 +163,6 @@ public class ArtemisOverlayWindow {
         }
     }
 
-    private void hideIme() {
-        if (mRootView == null) return;
-        try {
-            android.view.inputmethod.InputMethodManager imm =
-                    (android.view.inputmethod.InputMethodManager)
-                            mRootView.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) imm.hideSoftInputFromWindow(mRootView.getWindowToken(), 0);
-        } catch (Exception ignored) {}
-    }
-
     public void setVisible(boolean visible) {
         if (mRootView == null || mWindowManager == null) return;
 
@@ -183,15 +173,15 @@ public class ArtemisOverlayWindow {
             params.x = 0;
             params.y = 0;
             params.flags &= ~(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-            // Take key/motion focus for input forwarding, but keep the local IME
-            // out of it — a desktop stream never wants the Android soft keyboard.
-            params.flags |= WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    // NOT ALT_FOCUSABLE_IM: the overlay must be the IME's target so
+                    // SpectreBoard z-orders ABOVE the stream. With that flag set the
+                    // IME attached to the window behind and rendered under the stream.
+                    | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
             mWindowManager.updateViewLayout(mRootView, params);
             mRootView.setAlpha(1.0f);
             mRootView.requestFocus();
             applyImmersive();
-            hideIme();
             // Pointer capture must be (re)requested once focus has actually landed.
             mRootView.post(this::requestCapture);
             mVisible = true;
