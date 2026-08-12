@@ -52,6 +52,22 @@ public class ArtemisDaemonService extends Service implements GameInputController
     public static final String ACTION_TOGGLE = "com.termux.diana.action.OVERLAY_TOGGLE";
     public static final String ACTION_STOP = "com.termux.diana.action.OVERLAY_STOP";
 
+    // Cybersyn's HID-mode gate: content "amd" makes the volume keys drive comrade's
+    // gyro-pointer + click (KeyHijackController.amdMode), watched via FileObserver.
+    // SpectreBoard writes this when its trackpad is up; the diana overlay is also a
+    // remote-pointer surface, so drive the same gate while it's shown. (diana shares
+    // UID 1000 / system_app_data_file with com.termux, so it can write here.)
+    private static final java.io.File HID_MODE_FILE =
+            new java.io.File("/data/data/com.termux/files/usr/tmp/cybersyn-hidmode");
+
+    private void setHidMode(String mode) {
+        try (java.io.FileWriter w = new java.io.FileWriter(HID_MODE_FILE)) {
+            w.write(mode);
+        } catch (Exception e) {
+            Log.e("ArtemisDaemon", "Failed to set cybersyn-hidmode gate", e);
+        }
+    }
+
     private ArtemisOverlayWindow mOverlay;
     private StreamController mStream;
     private ArtemisConfig mConfig;
@@ -193,6 +209,8 @@ public class ArtemisDaemonService extends Service implements GameInputController
         mOverlay.setInputController(mInputController);
         // Grab focus + show only now that video is actually coming up.
         mOverlay.setVisible(true);
+        // Overlay is a remote-pointer surface: route vol keys to gyro/click on comrade.
+        setHidMode("amd");
     }
 
     private void hideOverlay() {
@@ -209,10 +227,13 @@ public class ArtemisDaemonService extends Service implements GameInputController
             // hidden. Decode is already paused, so there's no power cost to clearing it.
             mStream.setTargetFps(0);
         }
+        // Overlay no longer taking input: release the vol-key gyro/click override.
+        setHidMode("android");
     }
 
     @Override public void onDestroy() {
         try { unregisterReceiver(mScreenReceiver); } catch (Exception ignored) {}
+        setHidMode("android");
         if (mInputController != null) { mInputController.destroy(); mInputController = null; }
         if (mStream != null) { mStream.disconnect(); mStream = null; }
         if (mOverlay != null) { mOverlay.destroy(); mOverlay = null; }
