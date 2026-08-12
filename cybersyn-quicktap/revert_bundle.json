@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "appVersion": "0.2.78",
+  "exportedAtEpochMs": 1786554034096,
+  "tasks": [
+    {
+      "id": 1,
+      "name": "QuickTap: show volume slider",
+      "priority": 6,
+      "collisionMode": "ABORT_NEW",
+      "actions": [
+        {
+          "id": 1,
+          "type": "key.send",
+          "label": "Show volume slider",
+          "args": {
+            "code": "KEYCODE_VOLUME_UP"
+          },
+          "continueOnError": false
+        }
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": 1,
+      "name": "QuickTapSidebarTrigger",
+      "enabled": true,
+      "contexts": [
+        {
+          "type": "EVENT",
+          "config": {
+            "event": "external_trigger",
+            "trigger": "quick_tap"
+          },
+          "invert": false
+        }
+      ],
+      "enterTaskId": 1,
+      "cooldownSec": 0,
+      "automationMode": "RESTART",
+      "requiresRiskAcknowledgement": false
+    }
+  ]
+}

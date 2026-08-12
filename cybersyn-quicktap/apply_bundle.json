@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "appVersion": "0.2.78",
+  "exportedAtEpochMs": 1786553982037,
+  "tasks": [
+    {
+      "id": 1,
+      "name": "Artemis: toggle overlay",
+      "priority": 5,
+      "collisionMode": "ABORT_NEW",
+      "actions": [
+        {
+          "id": 1,
+          "type": "script.termux.run",
+          "label": "Toggle artemisd overlay",
+          "args": {
+            "executable": "~/.termux/tasker/artemis-toggle.sh",
+            "arguments": "",
+            "useRoot": "true",
+            "timeoutMs": "10000"
+          },
+          "continueOnError": false
+        }
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": 1,
+      "name": "QuickTapSidebarTrigger",
+      "enabled": true,
+      "contexts": [
+        {
+          "type": "EVENT",
+          "config": {
+            "event": "external_trigger",
+            "trigger": "quick_tap"
+          },
+          "invert": false
+        }
+      ],
+      "enterTaskId": 1,
+      "cooldownSec": 0,
+      "automationMode": "RESTART",
+      "requiresRiskAcknowledgement": false
+    }
+  ]
+}
