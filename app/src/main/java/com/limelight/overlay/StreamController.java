@@ -140,6 +140,10 @@ public class StreamController implements NvConnectionListener {
         if (mDecoder != null) mDecoder.setTargetFps(fps);
     }
 
+    public void setDecodePaused(boolean paused) {
+        if (mDecoder != null) mDecoder.setDecodePaused(paused);
+    }
+
     public InputHandler getInputHandler() { return mInputHandler; }
 
     // NvConnectionListener

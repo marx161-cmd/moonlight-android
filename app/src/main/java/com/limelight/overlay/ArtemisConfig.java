@@ -24,7 +24,9 @@ public class ArtemisConfig {
     @SerializedName("bitrate")  public int bitrate = 40;
     @SerializedName("codec")    public String codec = "auto";
     @SerializedName("inputOnly")public boolean inputOnly = false;
-    @SerializedName("audioEnabled") public boolean audioEnabled = true;
+    // Audio never plays on-device via Sunshine; leaving it off stops the host
+    // from encoding+sending an audio stream we'd only discard.
+    @SerializedName("audioEnabled") public boolean audioEnabled = false;
     @SerializedName("serverCertBase64") public String serverCertBase64 = null;
     @SerializedName("appId") public int appId = 0;
     @SerializedName("appName") public String appName = "Desktop";

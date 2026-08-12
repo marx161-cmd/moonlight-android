@@ -196,6 +196,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private volatile int targetFps = 0;
 
+    // Overlay-hidden idle: when paused, frames are dropped before decode so the
+    // hardware decoder and SoC can idle while the connection stays fully up.
+    // On resume we request a fresh IDR since the reference chain is broken.
+    private volatile boolean decodePaused = false;
+    private volatile boolean needIdrOnResume = false;
+
     private MediaCodecInfo findAvcDecoder() {
         MediaCodecInfo decoder = MediaCodecHelper.findProbableSafeDecoder("video/avc", MediaCodecInfo.CodecProfileLevel.AVCProfileHigh);
         if (decoder == null) {
@@ -1759,6 +1765,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             return MoonBridge.DR_OK;
         }
 
+        // Overlay hidden: drop the frame before any decode so the hardware
+        // decoder and SoC idle. The connection stays up (host keeps streaming);
+        // we just stop consuming. Reference chain breaks, so on resume we ask
+        // for a fresh IDR before decoding again.
+        if (decodePaused) {
+            lastFrameNumber = frameNumber;
+            return MoonBridge.DR_OK;
+        }
+        if (needIdrOnResume) {
+            needIdrOnResume = false;
+            lastFrameNumber = frameNumber;
+            return MoonBridge.DR_NEED_IDR;
+        }
+
         if (lastFrameNumber == 0) {
             activeWindowVideoStats.measurementStartTimestamp = SystemClock.uptimeMillis();
         } else if (frameNumber != lastFrameNumber && frameNumber != lastFrameNumber + 1) {
@@ -2435,6 +2455,18 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     public void setTargetFps(int fps) {
         this.targetFps = fps;
         applySurfaceFrameRate(renderTarget, fps);
+    }
+
+    // Pause/resume decode without tearing down the connection. Pausing drops
+    // incoming frames at the submit boundary (no MediaCodec work); resuming
+    // arms an IDR request so the host sends a keyframe to re-sync.
+    public void setDecodePaused(boolean paused) {
+        if (paused) {
+            decodePaused = true;
+        } else if (decodePaused) {
+            decodePaused = false;
+            needIdrOnResume = true;
+        }
     }
 
 

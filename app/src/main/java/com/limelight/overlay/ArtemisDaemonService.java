@@ -123,6 +123,8 @@ public class ArtemisDaemonService extends Service {
             mStream.setRenderTarget(mOverlay.getSurfaceView().getHolder().getSurface());
             mStream.connect();
             mStream.setTargetFps(mConfig.fps);
+            // Resume decoding (arms an IDR request if we were previously hidden)
+            mStream.setDecodePaused(false);
             // Wire input once the stream is connected
             if (mStream.getInputHandler() != null) {
                 mOverlay.setInputHandler(mStream.getInputHandler());
@@ -134,7 +136,12 @@ public class ArtemisDaemonService extends Service {
         if (!mVisible) return;
         mVisible = false;
         mOverlay.setVisible(false);
-        if (mStream != null) mStream.setTargetFps(1);
+        if (mStream != null) {
+            // Stop decoding entirely while hidden (connection stays up), and hint
+            // the panel down to 1 Hz. This is what makes hidden nearly free.
+            mStream.setDecodePaused(true);
+            mStream.setTargetFps(1);
+        }
     }
 
     @Override public void onDestroy() {
