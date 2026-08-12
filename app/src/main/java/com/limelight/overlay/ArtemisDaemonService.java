@@ -71,6 +71,9 @@ public class ArtemisDaemonService extends Service {
         if (mOverlay == null) {
             mOverlay = new ArtemisOverlayWindow();
             mOverlay.create(this);
+            // The Surface is created asynchronously after the window is added. If a
+            // show was requested before it was ready, connect the moment it is.
+            mOverlay.setOnSurfaceReadyListener(() -> { if (mVisible) connectStreamToSurface(); });
         }
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_STOP.equals(action)) { stopSelf(); return START_NOT_STICKY; }
@@ -91,7 +94,6 @@ public class ArtemisDaemonService extends Service {
     private void showOverlay() {
         if (mVisible) return;
         mVisible = true;
-        mOverlay.setVisible(true);
 
         if (mStream == null) {
             Log.e("ArtemisDaemon", "creating StreamController...");
@@ -134,17 +136,28 @@ public class ArtemisDaemonService extends Service {
                     mConfig.appId, mConfig.appName, mConfig.appUuid);
         }
 
+        // Connect now if the Surface is already up; otherwise the onSurfaceReady
+        // listener will connect once it is. We only make the overlay visible/
+        // focusable inside connectStreamToSurface(), so it never grabs focus (and
+        // toggles the keyboard) while empty.
         if (mOverlay.isSurfaceReady()) {
-            mStream.setRenderTarget(mOverlay.getSurfaceView().getHolder().getSurface());
-            mStream.connect();
-            mStream.setTargetFps(mConfig.fps);
-            // Resume decoding (arms an IDR request if we were previously hidden)
-            mStream.setDecodePaused(false);
-            // Wire input once the stream is connected
-            if (mStream.getInputHandler() != null) {
-                mOverlay.setInputHandler(mStream.getInputHandler());
-            }
+            connectStreamToSurface();
         }
+    }
+
+    private void connectStreamToSurface() {
+        if (!mVisible || mStream == null || !mOverlay.isSurfaceReady()) return;
+        mStream.setRenderTarget(mOverlay.getSurfaceView().getHolder().getSurface());
+        mStream.connect();
+        mStream.setTargetFps(mConfig.fps);
+        // Resume decoding (arms an IDR request if we were previously hidden)
+        mStream.setDecodePaused(false);
+        // Wire input once the stream is connected
+        if (mStream.getInputHandler() != null) {
+            mOverlay.setInputHandler(mStream.getInputHandler());
+        }
+        // Grab focus + show only now that video is actually coming up.
+        mOverlay.setVisible(true);
     }
 
     private void hideOverlay() {

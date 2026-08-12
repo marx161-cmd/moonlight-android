@@ -19,6 +19,7 @@ import java.util.Collections;
 public class ArtemisOverlayWindow {
 
     private static final String TAG = "ArtemisOverlayWindow";
+    private static final int OFFSCREEN_X = 10000;
 
     private WindowManager mWindowManager;
     private View mRootView;
@@ -26,6 +27,7 @@ public class ArtemisOverlayWindow {
     private boolean mSurfaceReady;
     private boolean mVisible;
     private InputHandler mInputHandler;
+    private Runnable mOnSurfaceReady;
 
     public void create(Context context) {
         mWindowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
@@ -42,6 +44,7 @@ public class ArtemisOverlayWindow {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
                 mSurfaceReady = true;
+                if (mOnSurfaceReady != null) mOnSurfaceReady.run();
             }
 
             @Override
@@ -105,16 +108,36 @@ public class ArtemisOverlayWindow {
             });
         }
 
-        // Request pointer capture only AFTER focus is granted
+        // Request pointer capture only AFTER focus is granted, and re-request on
+        // every focus regain — capture is dropped whenever the window loses focus.
         mRootView.setOnFocusChangeListener((v, hasFocus) -> {
-            if (hasFocus && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                mRootView.requestPointerCapture();
-            }
+            if (hasFocus) requestCapture();
         });
     }
 
     public void setInputHandler(InputHandler handler) {
         mInputHandler = handler;
+    }
+
+    public void setOnSurfaceReadyListener(Runnable r) {
+        mOnSurfaceReady = r;
+        if (mSurfaceReady && r != null) r.run();
+    }
+
+    private void requestCapture() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && mRootView != null) {
+            try { mRootView.requestPointerCapture(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void hideIme() {
+        if (mRootView == null) return;
+        try {
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager)
+                            mRootView.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(mRootView.getWindowToken(), 0);
+        } catch (Exception ignored) {}
     }
 
     public void setVisible(boolean visible) {
@@ -124,22 +147,31 @@ public class ArtemisOverlayWindow {
                 (WindowManager.LayoutParams) mRootView.getLayoutParams();
 
         if (visible) {
+            params.x = 0;
+            params.y = 0;
             params.flags &= ~(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+            // Take key/motion focus for input forwarding, but keep the local IME
+            // out of it — a desktop stream never wants the Android soft keyboard.
+            params.flags |= WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
             mWindowManager.updateViewLayout(mRootView, params);
             mRootView.setAlpha(1.0f);
             mRootView.requestFocus();
+            hideIme();
+            // Pointer capture must be (re)requested once focus has actually landed.
+            mRootView.post(this::requestCapture);
             mVisible = true;
         } else {
-            // Keep the window full-size; just make it transparent and pass-through.
-            // Resizing to 1x1 would churn the SurfaceView BufferQueue
-            // (surfaceChanged/destroy) on every toggle. With decode paused there
-            // are no new frames to composite, so a transparent static layer is
-            // effectively free.
+            // A SurfaceView with setZOrderOnTop punches through the window, so the
+            // root view's alpha does NOT fade it — that's why alpha-only "hide"
+            // stayed visible. Move the whole window off-screen instead: truly
+            // hidden, Surface kept alive (no destroy/recreate churn), input off.
             mRootView.setAlpha(0.0f);
+            params.x = -OFFSCREEN_X;
             params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             mWindowManager.updateViewLayout(mRootView, params);
+            mRootView.releasePointerCapture();
             mVisible = false;
         }
     }
