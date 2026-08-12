@@ -200,10 +200,14 @@ public class ArtemisDaemonService extends Service implements GameInputController
         mVisible = false;
         mOverlay.setVisible(false);
         if (mStream != null) {
-            // Stop decoding entirely while hidden (connection stays up), and hint
-            // the panel down to 1 Hz. This is what makes hidden nearly free.
+            // Stop decoding entirely while hidden (connection stays up).
             mStream.setDecodePaused(true);
-            mStream.setTargetFps(1);
+            // CLEAR the surface frame-rate hint (0 = no preference) — do NOT force it
+            // to 1. Surface.setFrameRate applies a PER-UID frame-rate override, and diana
+            // shares UID 1000 with com.termux.shadereditor (the live wallpaper). Forcing
+            // 1fps here throttled the wallpaper to a crawl the instant the overlay was
+            // hidden. Decode is already paused, so there's no power cost to clearing it.
+            mStream.setTargetFps(0);
         }
     }
 

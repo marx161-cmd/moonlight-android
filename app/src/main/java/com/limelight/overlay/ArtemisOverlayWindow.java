@@ -36,10 +36,12 @@ public class ArtemisOverlayWindow {
         LayoutInflater inflater = LayoutInflater.from(context);
         mRootView = inflater.inflate(R.layout.overlay_artemis, null);
         mSurfaceView = mRootView.findViewById(R.id.overlay_surface);
-        // SurfaceView must render ON TOP of the overlay window, otherwise the
-        // window's background covers the decoder output (black screen).
-        mSurfaceView.setZOrderOnTop(true);
-        mSurfaceView.getHolder().setFormat(PixelFormat.TRANSLUCENT);
+        // Opaque SurfaceView in an opaque window (no setZOrderOnTop), exactly how the
+        // main Artemis app renders. This makes the whole overlay opaque so Android
+        // OCCLUDES the wallpaper/launcher behind it and stops compositing them — the
+        // translucent + zOrderOnTop combo kept the ShaderEditor wallpaper rendering at
+        // 120fps and saturated the display compositor (dpu flip stalls / missed frames).
+        mSurfaceView.getHolder().setFormat(PixelFormat.OPAQUE);
 
         mSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
@@ -74,7 +76,11 @@ public class ArtemisOverlayWindow {
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT
+                // OPAQUE (not TRANSLUCENT) so Android marks the wallpaper/launcher
+                // behind us as occluded and PAUSES them. A translucent overlay left the
+                // ShaderEditor live wallpaper rendering its GLSL at 120fps behind the
+                // stream, cooking the GPU and lagging the whole phone.
+                PixelFormat.OPAQUE
         );
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
