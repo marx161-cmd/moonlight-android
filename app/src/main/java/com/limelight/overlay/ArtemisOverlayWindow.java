@@ -25,8 +25,6 @@ public class ArtemisOverlayWindow {
     private SurfaceView mSurfaceView;
     private boolean mSurfaceReady;
     private boolean mVisible;
-    private int mSavedWidth = -1;
-    private int mSavedHeight = -1;
     private InputHandler mInputHandler;
 
     public void create(Context context) {
@@ -126,25 +124,22 @@ public class ArtemisOverlayWindow {
                 (WindowManager.LayoutParams) mRootView.getLayoutParams();
 
         if (visible) {
-            mRootView.setAlpha(1.0f);
-            if (mSavedWidth > 0) {
-                params.width = mSavedWidth;
-                params.height = mSavedHeight;
-            }
             params.flags &= ~(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
             mWindowManager.updateViewLayout(mRootView, params);
+            mRootView.setAlpha(1.0f);
             mRootView.requestFocus();
             mVisible = true;
         } else {
-            mSavedWidth = params.width;
-            mSavedHeight = params.height;
-            params.width = 1;
-            params.height = 1;
+            // Keep the window full-size; just make it transparent and pass-through.
+            // Resizing to 1x1 would churn the SurfaceView BufferQueue
+            // (surfaceChanged/destroy) on every toggle. With decode paused there
+            // are no new frames to composite, so a transparent static layer is
+            // effectively free.
+            mRootView.setAlpha(0.0f);
             params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             mWindowManager.updateViewLayout(mRootView, params);
-            mRootView.setAlpha(0.0f);
             mVisible = false;
         }
     }

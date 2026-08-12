@@ -121,6 +121,10 @@ running), and `setTargetFps(1)` is kept only as an LTPO panel-refresh hint.
 - `ArtemisDaemonService.hideOverlay()` pauses decode (+ `setTargetFps(1)` hint);
   `showOverlay()` resumes (arms the IDR).
 - `ArtemisConfig.audioEnabled` default → `false` (stops the host sending audio).
+- `ArtemisOverlayWindow.setVisible(false)` (finding #5): no longer resizes the window
+  to 1×1 — hide is now alpha 0 + NOT_FOCUSABLE/NOT_TOUCHABLE only, so the SurfaceView
+  BufferQueue isn't churned on every toggle. With decode paused there are no new
+  frames to composite, so the transparent full-size layer is effectively free.
 
 ---
 
@@ -129,13 +133,10 @@ running), and `setTargetFps(1)` is kept only as an LTPO panel-refresh hint.
 1. **Choreographer NPE guard** (finding #4): replace `activity.getWindowManager()` in
    `doFrame` with a `context`-based lookup + null guard. Dormant unless pacing is set
    to "Smoothest/Balanced", but a real crash if so. — `MediaCodecDecoderRenderer.java:1085`
-2. **Hidden window** (finding #5): stop resizing to 1×1 in `setVisible(false)`; use
-   alpha 0 + off-screen offset (`params.x = -displayWidth`) to avoid surface-resize
-   churn on every toggle. — `ArtemisOverlayWindow.setVisible()`
-3. **Existing on-device config**: the `audioEnabled=false` change is only a *default*
+2. **Existing on-device config**: the `audioEnabled=false` change is only a *default*
    (fresh installs). If `~/.config/artemis/artemis.conf` already exists on blazer with
    `audioEnabled: true`, edit it there too.
-4. **Verify on-device**: after install, toggle hide and confirm battery/CPU actually
+3. **Verify on-device**: after install, toggle hide and confirm battery/CPU actually
    drop (e.g. `dumpsys batterystats` / `top` for the decoder thread), and that show
    re-syncs cleanly (IDR arrives, no green/garbage frames).
 
