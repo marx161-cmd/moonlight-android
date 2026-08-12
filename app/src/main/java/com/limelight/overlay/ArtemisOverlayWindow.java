@@ -13,6 +13,7 @@ import android.view.View;
 import android.view.WindowManager;
 
 import com.limelight.R;
+import com.limelight.input.GameInputController;
 
 import java.util.Collections;
 
@@ -26,7 +27,7 @@ public class ArtemisOverlayWindow {
     private SurfaceView mSurfaceView;
     private boolean mSurfaceReady;
     private boolean mVisible;
-    private InputHandler mInputHandler;
+    private GameInputController mInputController;
     private Runnable mOnSurfaceReady;
 
     public void create(Context context) {
@@ -84,27 +85,34 @@ public class ArtemisOverlayWindow {
                     Collections.singletonList(new Rect(0, 0, displayWidth, displayHeight)));
         }
 
-        // Route input through the InputHandler (wired to the stream)
+        // Route all input through the shared GameInputController (the real Artemis
+        // input stack). Touch, generic motion, and captured-pointer all go through
+        // handleMotionEvent, exactly as Game.java routes them.
         mRootView.setFocusableInTouchMode(true);
         mRootView.setOnKeyListener((v, keyCode, event) -> {
-            if (mInputHandler == null) return false;
+            if (mInputController == null) return false;
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                return mInputHandler.handleKeyDown(event);
+                return mInputController.handleKeyDown(event);
             } else if (event.getAction() == KeyEvent.ACTION_UP) {
-                return mInputHandler.handleKeyUp(event);
+                return mInputController.handleKeyUp(event);
             }
             return false;
         });
 
         mRootView.setOnTouchListener((v, event) -> {
-            if (mInputHandler == null) return false;
-            return mInputHandler.handleTouch(v, event);
+            if (mInputController == null) return false;
+            return mInputController.handleMotionEvent(v, event);
+        });
+
+        mRootView.setOnGenericMotionListener((v, event) -> {
+            if (mInputController == null) return false;
+            return mInputController.handleMotionEvent(v, event);
         });
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             mRootView.setOnCapturedPointerListener((view, event) -> {
-                if (mInputHandler == null) return false;
-                return mInputHandler.handleCapturedPointer(view, event);
+                if (mInputController == null) return false;
+                return mInputController.handleMotionEvent(view, event);
             });
         }
 
@@ -115,8 +123,8 @@ public class ArtemisOverlayWindow {
         });
     }
 
-    public void setInputHandler(InputHandler handler) {
-        mInputHandler = handler;
+    public void setInputController(GameInputController controller) {
+        mInputController = controller;
     }
 
     public void setOnSurfaceReadyListener(Runnable r) {

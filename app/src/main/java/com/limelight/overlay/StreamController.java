@@ -33,7 +33,6 @@ public class StreamController implements NvConnectionListener {
     private Surface mRenderTarget;
     private boolean mConnected;
     private boolean mConnectionStarted;
-    private InputHandler mInputHandler;
 
     public StreamController(Context context,
                             PreferenceConfiguration prefConfig,
@@ -114,11 +113,6 @@ public class StreamController implements NvConnectionListener {
         AndroidAudioRenderer audio = new AndroidAudioRenderer(mContext, mPrefConfig.playHostAudio);
         mConnectionStarted = true;
 
-        // Build input handler wired to the connection
-        mInputHandler = new InputHandler(mConnection,
-                new com.limelight.binding.input.KeyboardTranslator(mPrefConfig),
-                mPrefConfig);
-
         mConnection.start(audio, mDecoder, this);
     }
 
@@ -131,7 +125,6 @@ public class StreamController implements NvConnectionListener {
             mConnection = null;
         }
         mDecoder = null;
-        mInputHandler = null;
     }
 
     public boolean isConnected() { return mConnected; }
@@ -144,7 +137,7 @@ public class StreamController implements NvConnectionListener {
         if (mDecoder != null) mDecoder.setDecodePaused(paused);
     }
 
-    public InputHandler getInputHandler() { return mInputHandler; }
+    public NvConnection getConnection() { return mConnection; }
 
     // NvConnectionListener
 

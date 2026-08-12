@@ -16,6 +16,7 @@ import android.util.Log;
 
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.preferences.GlPreferences;
+import com.limelight.input.GameInputController;
 import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.computers.ComputerDatabaseManager;
@@ -40,6 +41,7 @@ public class ArtemisDaemonService extends Service {
     private ArtemisOverlayWindow mOverlay;
     private StreamController mStream;
     private ArtemisConfig mConfig;
+    private GameInputController mInputController;
     private boolean mVisible;
 
     @Override public IBinder onBind(Intent i) { return null; }
@@ -152,10 +154,21 @@ public class ArtemisDaemonService extends Service {
         mStream.setTargetFps(mConfig.fps);
         // Resume decoding (arms an IDR request if we were previously hidden)
         mStream.setDecodePaused(false);
-        // Wire input once the stream is connected
-        if (mStream.getInputHandler() != null) {
-            mOverlay.setInputHandler(mStream.getInputHandler());
+        // Wire input through the REAL Artemis input stack (GameInputController),
+        // reusing the tuned touch/trackpad/multitouch/keyboard/mouse handling.
+        // Built once and reused; the connection (and thus this) lives across hides.
+        if (mInputController == null) {
+            android.view.View ref = mOverlay.getRootView();
+            PreferenceConfiguration prefs = PreferenceConfiguration.readPreferences(this);
+            mInputController = new GameInputController(
+                    this, mStream.getConnection(), prefs, ref,
+                    new com.limelight.binding.input.capture.OverlayPointerCaptureProvider(ref),
+                    new GameInputController.Host() {});
+            mInputController.initMouseMode();
         }
+        mInputController.setReferenceView(mOverlay.getRootView());
+        mInputController.setGrabbedInput(true);
+        mOverlay.setInputController(mInputController);
         // Grab focus + show only now that video is actually coming up.
         mOverlay.setVisible(true);
     }
@@ -174,6 +187,7 @@ public class ArtemisDaemonService extends Service {
 
     @Override public void onDestroy() {
         try { unregisterReceiver(mScreenReceiver); } catch (Exception ignored) {}
+        if (mInputController != null) { mInputController.destroy(); mInputController = null; }
         if (mStream != null) { mStream.disconnect(); mStream = null; }
         if (mOverlay != null) { mOverlay.destroy(); mOverlay = null; }
         stopForeground(true);
