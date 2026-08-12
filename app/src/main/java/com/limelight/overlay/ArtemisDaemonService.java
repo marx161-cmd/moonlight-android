@@ -4,7 +4,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
@@ -41,6 +44,17 @@ public class ArtemisDaemonService extends Service {
 
     @Override public IBinder onBind(Intent i) { return null; }
 
+    // Locking the phone (screen off) always hides the overlay. This is the
+    // guaranteed escape hatch: even if the overlay has grabbed focus and
+    // disabled nav gestures, hitting power frees the UI. Also pauses decode.
+    private final BroadcastReceiver mScreenReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            if (Intent.ACTION_SCREEN_OFF.equals(i.getAction())) {
+                hideOverlay();
+            }
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -48,6 +62,7 @@ public class ArtemisDaemonService extends Service {
         String glRenderer = GlPreferences.readPreferences(this).glRenderer;
         MediaCodecHelper.initialize(this, glRenderer);
         mConfig = ArtemisConfig.load();
+        registerReceiver(mScreenReceiver, new IntentFilter(Intent.ACTION_SCREEN_OFF));
     }
 
     @Override
@@ -145,6 +160,7 @@ public class ArtemisDaemonService extends Service {
     }
 
     @Override public void onDestroy() {
+        try { unregisterReceiver(mScreenReceiver); } catch (Exception ignored) {}
         if (mStream != null) { mStream.disconnect(); mStream = null; }
         if (mOverlay != null) { mOverlay.destroy(); mOverlay = null; }
         stopForeground(true);
