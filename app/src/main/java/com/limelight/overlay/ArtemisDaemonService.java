@@ -28,7 +28,21 @@ import android.util.Base64;
 
 import java.security.cert.X509Certificate;
 
-public class ArtemisDaemonService extends Service {
+public class ArtemisDaemonService extends Service implements GameInputController.Host {
+
+    // Three-finger tap in the stream toggles the soft keyboard (SpectreBoard),
+    // four-finger tap does the same "full" keyboard. Wired from GameInputController's
+    // gesture dispatch via this Host callback.
+    @Override public void toggleKeyboard() {
+        android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED,
+                    android.view.inputmethod.InputMethodManager.HIDE_IMPLICIT_ONLY);
+        }
+    }
+
+    @Override public void toggleFullKeyboard() { toggleKeyboard(); }
 
     private static final String CHANNEL_ID = "artemisd_channel";
     private static final int NOTIFICATION_ID = 0xd1;
@@ -171,7 +185,7 @@ public class ArtemisDaemonService extends Service {
             mInputController = new GameInputController(
                     this, mStream.getConnection(), prefs, ref,
                     new com.limelight.binding.input.capture.OverlayPointerCaptureProvider(ref),
-                    new GameInputController.Host() {});
+                    this);
             mInputController.initMouseMode();
         }
         mInputController.setReferenceView(mOverlay.getRootView());
