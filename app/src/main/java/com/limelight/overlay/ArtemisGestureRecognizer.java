@@ -43,6 +43,12 @@ public class ArtemisGestureRecognizer {
 
     private enum Phase { NONE, WATCH_BACK, WATCH_HOME, ANCHOR_DRAG }
 
+    // Anchor finger must be held this long before a 2nd finger counts as drag-start.
+    // A 3-finger tap lands all its pointers within a few ms of each other -- well under
+    // this -- so it passes through to GameInputController's tap-to-keyboard gesture
+    // instead of being stolen as anchor-drag.
+    private static final long ANCHOR_HOLD_MS = 180;
+
     private final Host host;
     private final View hapticView;
     private final int displayW, displayH;
@@ -93,10 +99,15 @@ public class ArtemisGestureRecognizer {
             }
 
             case MotionEvent.ACTION_POINTER_DOWN: {
-                // Second finger while the first is still near its down point => anchor-drag.
+                // Anchor-drag only arms once the anchor finger has been held in place for
+                // ANCHOR_HOLD_MS. getDownTime() is the time of the gesture's original
+                // ACTION_DOWN, so this is the true hold duration regardless of wall clock.
+                // A 3-finger tap's 2nd/3rd pointers land within a few ms of the 1st, well
+                // under the delay, so it falls through to GameInputController untouched.
                 int ai = ev.findPointerIndex(anchorPid);
                 boolean anchorHeld = ai >= 0
-                        && Math.hypot(ev.getX(ai) - anchorDownX, ev.getY(ai) - anchorDownY) < anchorSlopPx;
+                        && Math.hypot(ev.getX(ai) - anchorDownX, ev.getY(ai) - anchorDownY) < anchorSlopPx
+                        && (ev.getEventTime() - ev.getDownTime()) >= ANCHOR_HOLD_MS;
                 if (phase == Phase.NONE && anchorHeld) {
                     int idx = ev.getActionIndex();
                     dragPid = ev.getPointerId(idx);
