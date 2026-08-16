@@ -6,6 +6,7 @@ import android.view.Surface;
 import com.limelight.LimeLog;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
+import com.limelight.binding.video.PerfOverlayListener;
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.NvConnectionListener;
 import com.limelight.nvstream.StreamConfiguration;
@@ -32,6 +33,21 @@ public class StreamController implements NvConnectionListener {
     private Surface mRenderTarget;
     private boolean mConnected;
     private boolean mConnectionStarted;
+    private PerfOverlayListener mPerfListener;
+    private boolean mInvertResolution;
+
+    public void setPerfListener(PerfOverlayListener listener) {
+        mPerfListener = listener;
+    }
+
+    // Mirrors Game.java's shouldInvertDecoderResolution: negotiate+decode in the
+    // landscape SHAPE even when displaying portrait (hardware AV1 encode/decode is
+    // landscape-optimized -- confirmed live, portrait-native capped at ~60fps/22ms
+    // decode vs ~113fps when shaped landscape). The host is responsible for
+    // rotating capture to match; the client never applies a visual transform.
+    public void setInvertResolution(boolean invert) {
+        mInvertResolution = invert;
+    }
 
     public StreamController(Context context,
                             PreferenceConfiguration prefConfig,
@@ -74,7 +90,7 @@ public class StreamController implements NvConnectionListener {
         mDecoder = new MediaCodecDecoderRenderer(
                 mContext, mPrefConfig,
                 e -> {},
-                0, false, false, false, null, null);
+                0, false, false, mInvertResolution, null, mPerfListener);
 
         if (mDecoder.isHevcSupported()) {
             supportedVideoFormats |= MoonBridge.VIDEO_FORMAT_H265;
@@ -86,9 +102,18 @@ public class StreamController implements NvConnectionListener {
         mDecoder.setPreferLowerDelays(false);
         mDecoder.setPreferLowerDelaysTimeoutUs(2000);
 
+        // Negotiate the landscape SHAPE with the host when inverting -- mPrefConfig.width/
+        // height themselves stay the true (portrait) values the daemon actually wants
+        // displayed; only what we tell the host to encode gets swapped. The decoder's
+        // setup() callback (fed these same negotiated dims by the host) swaps them back
+        // via invertResolution to land on the correct final initialWidth/initialHeight.
+        int negotiatedWidth = mInvertResolution ? mPrefConfig.height : mPrefConfig.width;
+        int negotiatedHeight = mInvertResolution ? mPrefConfig.width : mPrefConfig.height;
+
         StreamConfiguration config = new StreamConfiguration.Builder()
-                .setResolution(mPrefConfig.width, mPrefConfig.height)
+                .setResolution(negotiatedWidth, negotiatedHeight)
                 .setRefreshRate(mPrefConfig.fps)
+                .setLaunchRefreshRate(mPrefConfig.fps)
                 .setBitrate(mPrefConfig.bitrate)
                 .setEnableSops(mPrefConfig.enableSops)
                 .enableLocalAudioPlayback(mPrefConfig.playHostAudio)

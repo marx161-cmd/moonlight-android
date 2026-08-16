@@ -25,6 +25,7 @@ public class ArtemisOverlayWindow {
     private WindowManager mWindowManager;
     private View mRootView;
     private SurfaceView mSurfaceView;
+    private android.widget.TextView mPerfStatsView;
     private boolean mSurfaceReady;
     private boolean mVisible;
     private GameInputController mInputController;
@@ -37,6 +38,7 @@ public class ArtemisOverlayWindow {
         LayoutInflater inflater = LayoutInflater.from(context);
         mRootView = inflater.inflate(R.layout.overlay_artemis, null);
         mSurfaceView = mRootView.findViewById(R.id.overlay_surface);
+        mPerfStatsView = mRootView.findViewById(R.id.overlay_perf_stats);
         // Opaque SurfaceView in an opaque window (no setZOrderOnTop), exactly how the
         // main Artemis app renders. This makes the whole overlay opaque so Android
         // OCCLUDES the wallpaper/launcher behind it and stops compositing them — the
@@ -91,6 +93,27 @@ public class ArtemisOverlayWindow {
         params.gravity = Gravity.TOP | Gravity.LEFT;
         params.x = 0;
         params.y = 0;
+
+        // Surface.setFrameRate() is only an advisory vote that SurfaceFlinger's
+        // arbitration can round down to a shared category (this device's adaptive
+        // refresh only exposes {normal=60, high=90} as auto-arbitrated tiers) --
+        // measured live capping the overlay at ~91fps even with a FIXED_SOURCE 120
+        // vote. Requesting the WINDOW's preferredDisplayModeId instead asks
+        // WindowManagerService to switch the physical display's active mode
+        // directly, bypassing per-surface vote arbitration entirely.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.view.Display display = mWindowManager.getDefaultDisplay();
+            android.view.Display.Mode best = null;
+            for (android.view.Display.Mode mode : display.getSupportedModes()) {
+                if (mode.getPhysicalWidth() == real.x && mode.getPhysicalHeight() == real.y
+                        && (best == null || mode.getRefreshRate() > best.getRefreshRate())) {
+                    best = mode;
+                }
+            }
+            if (best != null) {
+                params.preferredDisplayModeId = best.getModeId();
+            }
+        }
 
         mWindowManager.addView(mRootView, params);
 
@@ -214,6 +237,25 @@ public class ArtemisOverlayWindow {
             mRootView.releasePointerCapture();
             mVisible = false;
         }
+    }
+
+    // Sizes the SurfaceView's actual pixel buffer to the negotiated stream resolution,
+    // independent of the window's own (real display / portrait) layout size. Android
+    // letterboxes a fixed-size buffer to fit the view bounds by default, so a landscape
+    // stream renders correctly centered inside the portrait overlay window with no
+    // WindowManager resize needed.
+    public void setStreamBufferSize(int width, int height) {
+        if (mSurfaceView != null) mSurfaceView.getHolder().setFixedSize(width, height);
+    }
+
+    public void setPerfStatsVisible(boolean visible) {
+        if (mPerfStatsView != null) {
+            mPerfStatsView.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    public void setPerfStatsText(String text) {
+        if (mPerfStatsView != null) mPerfStatsView.setText(text);
     }
 
     public boolean isSurfaceReady() { return mSurfaceReady; }
