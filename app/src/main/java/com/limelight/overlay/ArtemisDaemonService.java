@@ -438,43 +438,53 @@ public class ArtemisDaemonService extends Service
         mStream.setTargetFps(mConfig.fps);
         // Resume decoding (arms an IDR request if we were previously hidden)
         mStream.setDecodePaused(false);
-        // Wire input through the REAL Artemis input stack (GameInputController),
-        // reusing the tuned touch/trackpad/multitouch/keyboard/mouse handling.
-        // Built once and reused; the connection (and thus this) lives across hides.
-        if (mInputController == null) {
-            android.view.View ref = mOverlay.getRootView();
-            PreferenceConfiguration prefs = PreferenceConfiguration.readPreferences(this);
-            mInputController = new GameInputController(
-                    this, mStream.getConnection(), prefs, ref,
-                    new com.limelight.binding.input.capture.OverlayPointerCaptureProvider(ref),
-                    this);
-            mInputController.initMouseMode();
+
+        android.view.WindowManager wm = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+        android.graphics.Point real = new android.graphics.Point();
+        wm.getDefaultDisplay().getRealSize(real);
+
+        if (mConfig.stripMode) {
+            // View-only top slice: no input stack, no gyro/click hijack, not an IME
+            // kiosk target -- NOT_TOUCHABLE/NOT_FOCUSABLE (set inside show()) let
+            // touches fall through to whatever's underneath.
+            mOverlay.show(true, real.x, real.y, mConfig.stripFraction);
+            setOverlayVisibleFlag(false);
+        } else {
+            // Wire input through the REAL Artemis input stack (GameInputController),
+            // reusing the tuned touch/trackpad/multitouch/keyboard/mouse handling.
+            // Built once and reused; the connection (and thus this) lives across hides.
+            if (mInputController == null) {
+                android.view.View ref = mOverlay.getRootView();
+                PreferenceConfiguration prefs = PreferenceConfiguration.readPreferences(this);
+                mInputController = new GameInputController(
+                        this, mStream.getConnection(), prefs, ref,
+                        new com.limelight.binding.input.capture.OverlayPointerCaptureProvider(ref),
+                        this);
+                mInputController.initMouseMode();
+            }
+            mInputController.setReferenceView(mOverlay.getRootView());
+            mInputController.setGrabbedInput(true);
+            mOverlay.setInputController(mInputController);
+            // Gesture recognizer (edge-back / bottom-home / anchor-drag) runs as a
+            // touch pre-filter. Built once; sized to the real display.
+            if (mGestureRecognizer == null) {
+                float density = getResources().getDisplayMetrics().density;
+                mGestureRecognizer = new ArtemisGestureRecognizer(
+                        this, mOverlay.getRootView(), density, real.x, real.y);
+            }
+            mOverlay.setGestureRecognizer(mGestureRecognizer);
+            // Grab focus + show only now that video is actually coming up.
+            mOverlay.show(false, real.x, real.y, mConfig.stripFraction);
+            // Overlay is a remote-pointer surface: route vol keys to gyro/click on comrade.
+            setHidMode("amd");
+            setOverlayVisibleFlag(true);
         }
-        mInputController.setReferenceView(mOverlay.getRootView());
-        mInputController.setGrabbedInput(true);
-        mOverlay.setInputController(mInputController);
-        // Gesture recognizer (edge-back / bottom-home / anchor-drag) runs as a touch
-        // pre-filter. Built once; sized to the real display.
-        if (mGestureRecognizer == null) {
-            float density = getResources().getDisplayMetrics().density;
-            android.view.WindowManager wm = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
-            android.graphics.Point real = new android.graphics.Point();
-            wm.getDefaultDisplay().getRealSize(real);
-            mGestureRecognizer = new ArtemisGestureRecognizer(
-                    this, mOverlay.getRootView(), density, real.x, real.y);
-        }
-        mOverlay.setGestureRecognizer(mGestureRecognizer);
-        // Grab focus + show only now that video is actually coming up.
-        mOverlay.setVisible(true);
-        // Overlay is a remote-pointer surface: route vol keys to gyro/click on comrade.
-        setHidMode("amd");
-        setOverlayVisibleFlag(true);
     }
 
     private void hideOverlay() {
         if (!mVisible) return;
         mVisible = false;
-        mOverlay.setVisible(false);
+        mOverlay.hide();
         if (mStream != null) {
             // Stop decoding entirely while hidden (connection stays up).
             mStream.setDecodePaused(true);

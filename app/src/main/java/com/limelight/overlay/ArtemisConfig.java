@@ -48,6 +48,12 @@ public class ArtemisConfig {
     @SerializedName("appId") public int appId = 881448767;
     @SerializedName("appName") public String appName = "Desktop";
     @SerializedName("appUuid") public String appUuid = "D35489BC-EF06-D101-D003-1F39FECBE5CD";
+    // Strip mode: Quick Tap shows only a top slice of the desktop, view-only (no
+    // input capture, not an IME target) so the rest of the phone stays usable
+    // normally. Independent of the show/hide state itself -- toggled via
+    // ArtemisStripModeTileService, read by ArtemisDaemonService on the next show.
+    @SerializedName("stripMode") public boolean stripMode = false;
+    @SerializedName("stripFraction") public float stripFraction = 0.3f;
 
     public static ArtemisConfig load() {
         try {

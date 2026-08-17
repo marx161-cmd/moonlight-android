@@ -180,3 +180,34 @@ artemisd pattern (Quick Tap toggle, screen-off escape, hid-mode gate) drops in u
 com.termux.diana.root.noir <apk>` — **never remount**. A config/window change needs the daemon
 process to actually restart (a Quick Tap only toggles the running one): `OVERLAY_STOP` then kill
 the pid, then re-summon.
+
+### 8.1 Strip mode (2026-08-18, live+verified)
+
+`ArtemisConfig.stripMode` (persisted in `artemis.conf`) switches what a Quick Tap's next
+`OVERLAY_SHOW` draws:
+- **false (default):** the existing full kiosk overlay, unchanged — real `GameInputController`
+  input stack, IME target, immersive fullscreen, `NOT_FOCUSABLE`/`NOT_TOUCHABLE` cleared.
+- **true:** a view-only top slice, `stripFraction` (default 0.3) of the display height. Decode
+  stays full-resolution (`setStreamBufferSize` unchanged) — only the *window* shrinks
+  (`ArtemisOverlayWindow.show(stripMode, ...)`), while the `SurfaceView` inside stays laid out at
+  full display height, top-aligned. A window clips its content to its own bounds, so this crops
+  to the top slice instead of squishing the whole desktop down — confirmed live via screenshot
+  (video title cut cleanly at the strip's bottom edge, not scaled). `NOT_FOCUSABLE`/
+  `NOT_TOUCHABLE` stay SET (same pair the fully-hidden state already used) so touches fall
+  through to whatever's underneath and the rest of the phone works normally; no
+  `GameInputController`/gesture recognizer/pointer-capture wiring happens in this mode, and the
+  gyro/click `cybersyn-hidmode` gate is left alone (`"android"`, not `"amd"`).
+- Toggled via a second QS tile, `ArtemisStripModeTileService` ("Artemis: Full" / "Artemis:
+  Strip"), separate from the existing `ArtemisTileService` (quick-menu popup). It's a pure
+  preference flip — deliberately does NOT poke the running daemon, since
+  `ArtemisDaemonService.onStartCommand` always constructs `ArtemisOverlayWindow` even for an
+  action that isn't SHOW, so starting the service just to reshape an already-open overlay risked
+  a stray invisible-window flash. The new mode takes effect on the *next* show, not live mid-
+  session. **User must manually add the new tile to their Quick Settings panel once** (Android
+  doesn't let an app auto-pin a QS tile).
+- `ArtemisOverlayWindow.setVisible(boolean)` was renamed/split into `show(stripMode, displayWidth,
+  displayHeight, stripFraction)` and `hide()` — the two former branches of the old single method,
+  now with `show()` also branching on `stripMode` for width/height/gravity/flags/immersive/
+  gesture-exclusion. `hide()` itself is unchanged (still the off-screen-position trick, see
+  §above). Battery-neutral by design: this is a UX toggle, not a battery toggle — strip mode
+  decodes exactly as much as fullscreen.

@@ -12,6 +12,8 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
 
+import android.widget.FrameLayout;
+
 import com.limelight.R;
 import com.limelight.input.GameInputController;
 
@@ -202,41 +204,96 @@ public class ArtemisOverlayWindow {
         }
     }
 
-    public void setVisible(boolean visible) {
+    /**
+     * @param stripMode false = full kiosk overlay (real input stack, IME target,
+     *                   immersive fullscreen). true = view-only top slice: window
+     *                   shrinks to stripFraction of the display height but the
+     *                   SurfaceView inside stays laid out at full displayHeight,
+     *                   top-aligned -- a window clips its content to its own
+     *                   bounds, so the shrunk window crops to just the top slice
+     *                   instead of the whole desktop getting squished down.
+     *                   NOT_TOUCHABLE/NOT_FOCUSABLE stay SET (same pair the fully
+     *                   hidden state uses) so touches fall through to whatever's
+     *                   underneath and the rest of the phone works normally.
+     */
+    public void show(boolean stripMode, int displayWidth, int displayHeight, float stripFraction) {
         if (mRootView == null || mWindowManager == null) return;
 
         WindowManager.LayoutParams params =
                 (WindowManager.LayoutParams) mRootView.getLayoutParams();
+        params.x = 0;
+        params.y = 0;
+        params.gravity = Gravity.TOP | Gravity.LEFT;
 
-        if (visible) {
-            params.x = 0;
-            params.y = 0;
+        if (stripMode) {
+            params.width = displayWidth;
+            params.height = Math.round(displayHeight * stripFraction);
+            params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            params.flags &= ~WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+            layoutSurfaceView(displayHeight, Gravity.TOP | Gravity.LEFT);
+            mWindowManager.updateViewLayout(mRootView, params);
+            mRootView.setAlpha(1.0f);
+            clearImmersive();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                mRootView.setSystemGestureExclusionRects(Collections.emptyList());
+            }
+        } else {
+            params.width = displayWidth;
+            params.height = displayHeight;
             params.flags &= ~(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     // NOT ALT_FOCUSABLE_IM: the overlay must be the IME's target so
                     // SpectreBoard z-orders ABOVE the stream. With that flag set the
                     // IME attached to the window behind and rendered under the stream.
                     | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+            layoutSurfaceView(FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER);
             mWindowManager.updateViewLayout(mRootView, params);
             mRootView.setAlpha(1.0f);
             mRootView.requestFocus();
             applyImmersive();
             // Pointer capture must be (re)requested once focus has actually landed.
             mRootView.post(this::requestCapture);
-            mVisible = true;
-        } else {
-            // A SurfaceView with setZOrderOnTop punches through the window, so the
-            // root view's alpha does NOT fade it — that's why alpha-only "hide"
-            // stayed visible. Move the whole window off-screen instead: truly
-            // hidden, Surface kept alive (no destroy/recreate churn), input off.
-            mRootView.setAlpha(0.0f);
-            params.x = -OFFSCREEN_X;
-            params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-            mWindowManager.updateViewLayout(mRootView, params);
-            mRootView.releasePointerCapture();
-            mVisible = false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                mRootView.setSystemGestureExclusionRects(
+                        Collections.singletonList(new Rect(0, 0, displayWidth, displayHeight)));
+            }
         }
+        mVisible = true;
+    }
+
+    public void hide() {
+        if (mRootView == null || mWindowManager == null) return;
+
+        WindowManager.LayoutParams params =
+                (WindowManager.LayoutParams) mRootView.getLayoutParams();
+
+        // A SurfaceView with setZOrderOnTop punches through the window, so the
+        // root view's alpha does NOT fade it — that's why alpha-only "hide"
+        // stayed visible. Move the whole window off-screen instead: truly
+        // hidden, Surface kept alive (no destroy/recreate churn), input off.
+        mRootView.setAlpha(0.0f);
+        params.x = -OFFSCREEN_X;
+        params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        mWindowManager.updateViewLayout(mRootView, params);
+        mRootView.releasePointerCapture();
+        mVisible = false;
+    }
+
+    private void layoutSurfaceView(int height, int gravity) {
+        if (mSurfaceView == null) return;
+        FrameLayout.LayoutParams svParams =
+                (FrameLayout.LayoutParams) mSurfaceView.getLayoutParams();
+        svParams.width = FrameLayout.LayoutParams.MATCH_PARENT;
+        svParams.height = height;
+        svParams.gravity = gravity;
+        mSurfaceView.setLayoutParams(svParams);
+    }
+
+    private void clearImmersive() {
+        if (mRootView == null) return;
+        mRootView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
     }
 
     // Sizes the SurfaceView's actual pixel buffer to the negotiated stream resolution,
