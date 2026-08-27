@@ -62,8 +62,10 @@ import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
@@ -80,6 +82,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.provider.Settings;
 import android.os.IBinder;
 import android.os.PersistableBundle;
 import android.os.VibrationEffect;
@@ -140,7 +143,8 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         OnGenericMotionListener, OnTouchListener, NvConnectionListener, EvdevListener,
         OnSystemUiVisibilityChangeListener, GameGestures, StreamContainer.InputCallbacks,
         ExternalControllerView.InputCallbacks,
-        PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener {
+        PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener,
+        com.limelight.ui.AnchorDragGestureRecognizer.Host {
     public static Game instance;
 
     private int lastButtonState = 0;
@@ -182,8 +186,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     private int displayWidth;
     private int displayHeight;
     private int currentOrientation;
+    private boolean releaseOrientationLockOnConnect;
 
     public NvConnection conn;
+    private com.limelight.ui.AnchorDragGestureRecognizer anchorDragRecognizer;
     private SpinnerDialog spinner;
     private boolean displayedFailureDialog = false;
     private boolean connecting = false;
@@ -267,6 +273,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public static final String EXTRA_VDISPLAY = "VirtualDisplay";
     public static final String EXTRA_SERVER_COMMANDS = "ServerCommands";
     public static final String EXTRA_DISPLAY_ID = "DisplayID";
+    public static final String EXTRA_RELEASE_ORIENTATION_LOCK = "ReleaseOrientationLock";
 
     public static final String CLIPBOARD_IDENTIFIER = "ArtemisStreaming";
 
@@ -486,6 +493,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 prefConfig
         );
 
+        // Device-orientation-follow (physical rotation -> client + host VKMS) tried
+        // and reverted 2026-08-21: reactions were "all over the place" live. Revisit
+        // another day rather than debug further this session.
+
         // Restore previous zoom & pan if enabled and saved
         if (prefConfig.rememberZoomPan) {
             streamContainer.post(() -> panZoomHandler.setInitialZoomAndPan(
@@ -572,6 +583,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         uniqueId = Game.this.getIntent().getStringExtra(EXTRA_UNIQUEID);
         vDisplay = Game.this.getIntent().getBooleanExtra(EXTRA_VDISPLAY, false);
         serverCommands = Game.this.getIntent().getStringArrayListExtra(EXTRA_SERVER_COMMANDS);
+        releaseOrientationLockOnConnect = Game.this.getIntent().getBooleanExtra(EXTRA_RELEASE_ORIENTATION_LOCK, false);
         boolean appSupportsHdr = Game.this.getIntent().getBooleanExtra(EXTRA_APP_HDR, false);
         byte[] derCertData = Game.this.getIntent().getByteArrayExtra(EXTRA_SERVER_CERT);
 
@@ -932,6 +944,128 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 }
             }
         } catch (Throwable ignored) {}
+
+        // Publish real IME visibility to Cybersyn so the host-side i3 keyboard-spacer
+        // (cybersyn-hid-relay.py) only reacts to Diana's own keyboard, not whichever app
+        // on the phone happens to have focus -- SpectreBoard is the system default IME, so
+        // its own onStartInputView/onFinishInputView fire for every app, not just Diana.
+        // WindowInsets on Diana's own root view only ever reflects Diana's own IME state.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                View insetsRoot = findViewById(android.R.id.content);
+                if (insetsRoot != null) {
+                    insetsRoot.setOnApplyWindowInsetsListener((v, insets) -> {
+                        boolean imeVisible = insets.isVisible(android.view.WindowInsets.Type.ime());
+                        publishKeyboardVisibleToCybersyn(imeVisible);
+                        return v.onApplyWindowInsets(insets);
+                    });
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // Mirror the phone's own STREAM_MUSIC volume (the normal, unprivileged per-app
+        // media volume every app already has -- no special permission, no OTA) onto the
+        // AMD->Oppo audio relay via cybersyn-hid-relay.py. Diana already holds real
+        // playback + audio focus while streaming, so the volume rocker already targets
+        // this stream during normal use; this just forwards the resulting level.
+        try {
+            IntentFilter volumeFilter = new IntentFilter("android.media.VOLUME_CHANGED_ACTION");
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(musicVolumeReceiver, volumeFilter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(musicVolumeReceiver, volumeFilter);
+            }
+            publishOppoVolume();
+        } catch (Throwable ignored) {}
+    }
+
+    private Integer lastPublishedOppoVolumePercent = null;
+    private final BroadcastReceiver musicVolumeReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            int streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1);
+            if (streamType == AudioManager.STREAM_MUSIC) {
+                publishOppoVolume();
+            }
+        }
+    };
+
+    private void publishOppoVolume() {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am == null) return;
+            int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            if (max <= 0) return;
+            int current = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+            int percent = Math.round((current * 100f) / max);
+            if (lastPublishedOppoVolumePercent != null && lastPublishedOppoVolumePercent == percent) {
+                return;
+            }
+            lastPublishedOppoVolumePercent = percent;
+            publishCybersynFifo("cybersyn/hid/oppo_volume", String.valueOf(percent));
+        } catch (Throwable ignored) {}
+    }
+
+    private Boolean lastPublishedKeyboardVisible = null;
+    private Boolean pendingKeyboardVisible = null;
+    private final android.os.Handler keyboardVisibleDebounceHandler =
+        new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable keyboardVisibleDebounceRunnable = () -> {
+        if (pendingKeyboardVisible == null) return;
+        boolean settled = pendingKeyboardVisible;
+        pendingKeyboardVisible = null;
+        if (lastPublishedKeyboardVisible != null && lastPublishedKeyboardVisible == settled) {
+            return;
+        }
+        lastPublishedKeyboardVisible = settled;
+        sendKeyboardVisibleFifo(settled);
+    };
+
+    private void publishKeyboardVisibleToCybersyn(boolean visible) {
+        // Profiles that already negotiate a shorter stream height (top-pinned, black
+        // padding left for the keyboard) don't need the host to also carve out its own
+        // i3 spacer -- that just eats a second helping of vertical space on top of what
+        // the client already reserved. Let those profiles opt out entirely.
+        if (prefConfig.suppressImeSpacer) {
+            return;
+        }
+
+        // WindowInsets can report several true/false flips during a single IME show/hide
+        // animation (observed live: multiple rapid spawn/kill cycles on the host-side spacer
+        // per keyboard summon, occasionally racing xdotool into timing out entirely and
+        // leaving the spacer window opaque). Debounce to the settled state after 200ms of
+        // quiet instead of publishing every intermediate callback.
+        pendingKeyboardVisible = visible;
+        keyboardVisibleDebounceHandler.removeCallbacks(keyboardVisibleDebounceRunnable);
+        keyboardVisibleDebounceHandler.postDelayed(keyboardVisibleDebounceRunnable, 200);
+    }
+
+    private void sendKeyboardVisibleFifo(boolean visible) {
+        publishCybersynFifo("cybersyn/hid/keyboard_visible", visible ? "1" : "0");
+    }
+
+    /** Shared writer into Cybersyn's ingest FIFO -- same mechanism as SpectreBoard's
+     * CybersynFifo.kt / the cybersyn-send wrapper, same file, same shared UID 1000. */
+    private void publishCybersynFifo(String topic, String payload) {
+        new Thread(() -> {
+            try {
+                // O_RDWR so open() never blocks even while Cybersyn's reader is respawning
+                // (a plain O_WRONLY open on a FIFO blocks until a reader attaches); we only
+                // ever write.
+                java.io.FileDescriptor fd = android.system.Os.open(
+                    "/data/data/com.termux/files/usr/tmp/cybersyn-pub.fifo",
+                    android.system.OsConstants.O_RDWR, 0);
+                try {
+                    byte[] line = (topic + "\t" + payload + "\n")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    android.system.Os.write(fd, line, 0, line.length);
+                } finally {
+                    android.system.Os.close(fd);
+                }
+            } catch (Throwable ignored) {
+                // Cybersyn down / FIFO absent -- these are momentary state pushes, nothing to retry.
+            }
+        }).start();
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1399,6 +1533,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         return true;
     }
 
+    // PiP-triggered rotation (both a client-side rotateScreen() attempt and a
+    // host-side VKMS-follow-via-MQTT attempt) tried and reverted 2026-08-21 -- neither
+    // behaved reliably live. Revisit another day; PiP itself works fine unmodified.
+
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
@@ -1704,6 +1842,8 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         instance = null;
         timerHandler.removeCallbacksAndMessages(null);
+
+        try { unregisterReceiver(musicVolumeReceiver); } catch (Throwable ignored) {}
 
         if (prefConfig.enableFullExDisplay) handleDisplayRemoved();
 
@@ -3340,7 +3480,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                             toggleKeyboard();
                             return true;
                         } else if (currentEventTime - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
-                            toggleFullKeyboard();
+                            toggleTouchMode();
                             return true;
                         } else if (currentEventTime - fiveFingerDownTime < FIVE_FINGER_TAP_THRESHOLD) {
                             if(prefConfig.enableBackMenu) {
@@ -3414,7 +3554,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     fiveFingerDownTime = 0;
                     break;
                 } else if (pointerCount == 4 && fourFingerDownTime > 0 && currentEventTime - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
-                    toggleFullKeyboard();
+                    toggleTouchMode();
                     fourFingerDownTime = 0;
                     break;
                 } else if (pointerCount == 3 && threeFingerDownTime > 0 && currentEventTime - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
@@ -3510,7 +3650,60 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             view.requestUnbufferedDispatch(event);
         }
 
+        // Anchor-drag pre-filter: hold one finger, drag a second to move/resize the
+        // remote window (Super+drag on comrade). Consumes the gesture itself so it
+        // isn't also forwarded to the stream as cursor/touch input.
+        if (anchorDragRecognizer == null) {
+            anchorDragRecognizer = new com.limelight.ui.AnchorDragGestureRecognizer(
+                    this, view, getResources().getDisplayMetrics().density);
+        }
+        if (anchorDragRecognizer.onTouch(event)) {
+            return true;
+        }
+
         return handleMotionEvent(view, event);
+    }
+
+    // --- AnchorDragGestureRecognizer.Host: wired straight to this Activity's own
+    // NvConnection (no daemon/overlay indirection). WINDOW_MOVE holds Super + relative
+    // mouse move (i3 Mod+drag); LEFT/RIGHT_CLICK_DRAG hold the matching mouse button.
+    private static final short VK_LWIN = 0x5B;
+
+    @Override
+    public void onAnchorDragStart(com.limelight.ui.AnchorDragGestureRecognizer.Action action) {
+        if (conn == null) return;
+        switch (action) {
+            case WINDOW_MOVE:
+                conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, (byte) 0, (byte) 0);
+                break;
+            case LEFT_CLICK_DRAG:
+                conn.sendMouseButtonDown(com.limelight.nvstream.input.MouseButtonPacket.BUTTON_LEFT);
+                break;
+            case RIGHT_CLICK_DRAG:
+                conn.sendMouseButtonDown(com.limelight.nvstream.input.MouseButtonPacket.BUTTON_RIGHT);
+                break;
+        }
+    }
+
+    @Override
+    public void onAnchorDragMove(com.limelight.ui.AnchorDragGestureRecognizer.Action action, float dx, float dy) {
+        if (conn != null) conn.sendMouseMove((short) dx, (short) dy);
+    }
+
+    @Override
+    public void onAnchorDragEnd(com.limelight.ui.AnchorDragGestureRecognizer.Action action) {
+        if (conn == null) return;
+        switch (action) {
+            case WINDOW_MOVE:
+                conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, (byte) 0, (byte) 0);
+                break;
+            case LEFT_CLICK_DRAG:
+                conn.sendMouseButtonUp(com.limelight.nvstream.input.MouseButtonPacket.BUTTON_LEFT);
+                break;
+            case RIGHT_CLICK_DRAG:
+                conn.sendMouseButtonUp(com.limelight.nvstream.input.MouseButtonPacket.BUTTON_RIGHT);
+                break;
+        }
     }
 
     @Override
@@ -3763,6 +3956,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
                 connected = true;
                 connecting = false;
+
+                if (releaseOrientationLockOnConnect) {
+                    releaseOrientationLockOnConnect = false;
+                    releaseSystemOrientationLock();
+                }
                 updatePipAutoEnter();
 
                 // Hide the mouse cursor now after a short delay.
@@ -4096,13 +4294,76 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         }
     }
 
+    /**
+     * Rotate the stream. This used to just flip the Activity's own
+     * setRequestedOrientation() mid-stream, which never worked properly --
+     * it reshapes the window but doesn't renegotiate stream resolution with
+     * the host, and a prior attempt at live physical-rotation-follow (client
+     * + host VKMS reacting together while connected) was tried and reverted
+     * 2026-08-21 for being "all over the place" live.
+     *
+     * Instead: disconnect cleanly, flip the host's VKMS layout via the
+     * matching Apollo server_cmd (Diana: pixel-hi <-> pixel-hi-landscape,
+     * see display-vkms-appliance.sh), force the device into the target
+     * orientation, then reconnect fresh -- Game.onCreate() reads the
+     * device's *current* orientation once at connect time
+     * (setPreferredOrientationForActivity()), so the new stream negotiates
+     * the right resolution from the start instead of resizing mid-stream.
+     * The forced system rotation lock is released once the new stream's
+     * connectionStarted() fires. Safe now that the host-side VKMS geometry
+     * (2026-08-27) uses a fixed anchor that never overlaps regardless of
+     * which orientation MOBILE is in -- see display-vkms-appliance.sh.
+     */
     public void rotateScreen() {
-        if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-            currentOrientation = Configuration.ORIENTATION_PORTRAIT;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
-        } else {
-            currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
+        final boolean toLandscape = currentOrientation != Configuration.ORIENTATION_LANDSCAPE;
+
+        if (serverCommands != null) {
+            String targetCmdName = toLandscape ? "Pixel: Pixel Hi Landscape" : "Pixel: Pixel Hi";
+            int cmdIndex = serverCommands.indexOf(targetCmdName);
+            if (cmdIndex >= 0) {
+                sendExecServerCmd(cmdIndex);
+            } else {
+                LimeLog.warning("rotateScreen: server cmd \"" + targetCmdName + "\" not found in serverCommands");
+            }
+        }
+
+        forceSystemOrientation(toLandscape);
+
+        final Intent relaunch = new Intent(getIntent());
+        relaunch.putExtra(EXTRA_RELEASE_ORIENTATION_LOCK, true);
+
+        // Give the display service a beat to actually apply the forced
+        // rotation before the new Activity reads Configuration.orientation.
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            startActivity(relaunch);
+            disconnect();
+        }, 250);
+    }
+
+    /** Force the physical device's own display rotation (not just this
+     * Activity's window) to the target orientation, ahead of a reconnect
+     * that needs to read it. Requires WRITE_SETTINGS; Diana runs as
+     * android.uid.system (platform-signed) so this is auto-granted --
+     * not yet confirmed live on-device, logs and no-ops on SecurityException
+     * rather than crashing if that assumption is wrong. */
+    private void forceSystemOrientation(boolean landscape) {
+        try {
+            Settings.System.putInt(getContentResolver(), Settings.System.ACCELEROMETER_ROTATION, 0);
+            Settings.System.putInt(getContentResolver(), Settings.System.USER_ROTATION,
+                    landscape ? Surface.ROTATION_90 : Surface.ROTATION_0);
+        } catch (SecurityException e) {
+            LimeLog.warning("forceSystemOrientation: WRITE_SETTINGS denied: " + e.getMessage());
+        }
+    }
+
+    /** Re-enable auto-rotate once the post-rotateScreen() reconnect has
+     * actually connected -- called from connectionStarted() when
+     * releaseOrientationLockOnConnect is set. */
+    private void releaseSystemOrientationLock() {
+        try {
+            Settings.System.putInt(getContentResolver(), Settings.System.ACCELEROMETER_ROTATION, 1);
+        } catch (SecurityException e) {
+            LimeLog.warning("releaseSystemOrientationLock: WRITE_SETTINGS denied: " + e.getMessage());
         }
     }
 
@@ -4243,6 +4504,13 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         }
     }
 
+    /** 4-finger tap: toggle between multi-touch and trackpad (natural) mode, reusing
+     * applyMouseMode()'s existing touchContextMap rebuild -- session-only, not persisted,
+     * since this is a quick gesture toggle, not a settings change. */
+    private void toggleTouchMode() {
+        applyMouseMode(prefConfig.touchscreenTrackpad ? 0 : 2);
+    }
+
     private void applyMouseMode(int mode) {
         switch (mode) {
             case 0: // Multi-touch
@@ -4309,6 +4577,16 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     //切换触控灵敏度开关
     public void switchTouchSensitivity(){
         prefConfig.enableTouchSensitivity = !prefConfig.enableTouchSensitivity;
+    }
+
+    // For profiles that already negotiate a shorter stream height for the keyboard --
+    // stops publishing IME visibility, so the host never spawns its own i3 spacer too.
+    public void toggleImeSpacerSuppression() {
+        prefConfig.suppressImeSpacer = !prefConfig.suppressImeSpacer;
+    }
+
+    public boolean isImeSpacerSuppressed() {
+        return prefConfig.suppressImeSpacer;
     }
 
     public void disconnect() {
