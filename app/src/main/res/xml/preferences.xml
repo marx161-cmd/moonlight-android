@@ -106,6 +106,7 @@
             android:title="@string/title_top_center_display"
             app:iconSpaceReserved="false" />
 
+
         <com.limelight.preferences.SeekBarPreference
             android:defaultValue="100"
             android:dialogMessage=""

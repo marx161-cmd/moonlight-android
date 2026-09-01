@@ -977,6 +977,31 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             }
             publishOppoVolume();
         } catch (Throwable ignored) {}
+
+        // kiosk-gestures (2026-08-30): AbsSwipeUpHandler.getHomeTarget() (crDroid
+        // Launcher3/quickstep patch) rejects the real Home edge-swipe while this app is
+        // kiosk-flagged and broadcasts KIOSK_HOME_GESTURE, explicitly targeted at our
+        // package. Also doubles as a generic same-receiver remote-trigger surface --
+        // MINIMIZE_TO_PIP/ROTATE_SCREEN added so SpectreBoard macro scripts (num-key
+        // popup, ~/.termux/spectreboard/08_pixel/) can fire the same actions the
+        // in-stream GameMenu exposes, without a new IPC path per action. See
+        // ~/builds/android/kiosk-gestures/scope.md.
+        try {
+            IntentFilter kioskHomeFilter = new IntentFilter();
+            kioskHomeFilter.addAction("com.termux.diana.KIOSK_HOME_GESTURE");
+            kioskHomeFilter.addAction("com.termux.diana.MINIMIZE_TO_PIP");
+            kioskHomeFilter.addAction("com.termux.diana.ROTATE_SCREEN");
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                // RECEIVER_EXPORTED, unlike musicVolumeReceiver above: this broadcast comes
+                // from a genuinely different app/process (Launcher3/quickstep, or Termux),
+                // not the system/self -- NOT_EXPORTED blocks exactly that, confirmed live
+                // 2026-08-30 (manual test broadcast returned result=0, never reached
+                // onReceive()).
+                registerReceiver(kioskHomeGestureReceiver, kioskHomeFilter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(kioskHomeGestureReceiver, kioskHomeFilter);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private Integer lastPublishedOppoVolumePercent = null;
@@ -987,6 +1012,54 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             if (streamType == AudioManager.STREAM_MUSIC) {
                 publishOppoVolume();
             }
+        }
+    };
+
+    // kiosk-gestures (2026-08-30): relays the caught Home gesture to comrade over the
+    // already-live keyboard-passthrough channel, as an unused chord (Super+Ctrl+M) rather
+    // than inventing a new IPC path. i3 binds this chord to open the Pixel menu. VK codes
+    // are the same Win32 table VK_LWIN (0x5B) already uses above; VK_M is 0x4D.
+    private static final short VK_M = 0x4D;
+    // kiosk-gestures (2026-08-30): shared by the broadcast receiver below (from the
+    // quickstep patch, real Home swipe -- not yet reliably firing, see scope.md) and
+    // GameMenu's "Pixel Menu" option (manual, confirmed working end-to-end live) so both
+    // paths stay in sync rather than duplicating the relay sequence.
+    public void openPixelMenu() {
+        if (conn == null) return;
+        // Explicit real down/up events for each modifier, held across the M keystroke --
+        // NOT the single-event modifier-byte parameter. Confirmed live 2026-08-30: the
+        // modifier byte alone (one sendKeyboardInput call, CTRL|META in the modifier
+        // arg) reached Diana's own log fine but never registered as a held Super/Ctrl on
+        // the X side, so i3's bindsym never saw it. This mirrors the already-proven
+        // WINDOW_MOVE pattern a few hundred lines below (onAnchorDragStart/End), which
+        // sends VK_LWIN as its own real keydown/keyup rather than a modifier byte.
+        byte noModifier = (byte) 0;
+        conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, noModifier, (byte) 0);
+        conn.sendKeyboardInput((short) com.limelight.binding.input.KeyboardTranslator.VK_LCONTROL,
+                com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, noModifier, (byte) 0);
+        conn.sendKeyboardInput(VK_M, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, noModifier, (byte) 0);
+        conn.sendKeyboardInput(VK_M, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
+        conn.sendKeyboardInput((short) com.limelight.binding.input.KeyboardTranslator.VK_LCONTROL,
+                com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
+        conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
+    }
+
+    private final BroadcastReceiver kioskHomeGestureReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            // android.util.Log, not LimeLog -- LimeLog wraps java.util.logging, which does
+            // NOT reach logcat without an explicit FileHandler. Diagnostic only.
+            String action = intent.getAction();
+            android.util.Log.i("KioskHomeGesture", "onReceive action=" + action + " conn=" + (conn != null));
+            if ("com.termux.diana.MINIMIZE_TO_PIP".equals(action)) {
+                minimizeKioskToPip();
+                return;
+            }
+            if ("com.termux.diana.ROTATE_SCREEN".equals(action)) {
+                rotateScreen();
+                return;
+            }
+            openPixelMenu();
         }
     };
 
@@ -1844,6 +1917,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         timerHandler.removeCallbacksAndMessages(null);
 
         try { unregisterReceiver(musicVolumeReceiver); } catch (Throwable ignored) {}
+        try { unregisterReceiver(kioskHomeGestureReceiver); } catch (Throwable ignored) {}
 
         if (prefConfig.enableFullExDisplay) handleDisplayRemoved();
 
@@ -1883,6 +1957,12 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        engageKiosk();
+    }
+
+    @Override
     protected void onPause() {
         if (isFinishing()) {
             // Stop any further input device notifications before we lose focus (and pointer capture)
@@ -1894,7 +1974,57 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             setInputGrabState(false);
         }
 
+        disengageKiosk();
+
         super.onPause();
+    }
+
+    // kiosk-gestures (2026-08-30): Diana already runs same-UID-as-Termux/rooted, so it
+    // engages/disengages its own kiosk state directly on foreground/background rather than
+    // through a Cybersyn app_foreground rule (that trigger type never actually existed in
+    // Cybersyn's engine -- see ~/builds/android/kiosk-gestures/scope.md and
+    // ~/builds/android/artemis-patch/scope.md for the full history). Mirrors exactly what
+    // the old, never-functional kiosk-artemis.yaml's action/exit_action did. Runs on every
+    // onResume/onPause (including PiP transitions, which do fire onPause), not just real
+    // app open/close -- commands are idempotent so this self-heals rather than needing to
+    // be exactly once.
+    private void runRootShell(String command) {
+        try {
+            Runtime.getRuntime().exec(new String[]{"su", "-c", command});
+        } catch (Throwable ignored) {}
+    }
+
+    // kiosk-gestures (2026-08-30) follow-up: the power->Home relay (Cybersyn's
+    // PowerHomeRelayTrigger profile, external_trigger "power_short" -> key.send
+    // KEYCODE_HOME) must not be globally active -- Cybersyn has no real "is Diana
+    // foreground" check of its own (app_foreground never existed in its engine, see
+    // scope.md), so an always-on profile would relay Home on every power press in
+    // every app, all the time. Instead Diana enables/disables that ONE profile itself,
+    // exactly when it enables/disables kiosk -- same broadcast `cybersynctl profile
+    // enable/disable` uses (com.termux.cybersyn.action.SET_PROFILE_ENABLED on
+    // AutomationCliReceiver), just fired via root shell instead of adb.
+    private void setPowerHomeRelayEnabled(boolean enabled) {
+        runRootShell(
+                "am broadcast -a com.termux.cybersyn.action.SET_PROFILE_ENABLED "
+                + "-n com.termux.cybersyn/.core.external.AutomationCliReceiver "
+                + "--es com.termux.cybersyn.extra.PROFILE_NAME \"PowerHomeRelayTrigger\" "
+                + "--ez com.termux.cybersyn.extra.ENABLED " + enabled);
+    }
+
+    private void engageKiosk() {
+        runRootShell(
+                "echo performance > /sys/class/devfreq/codec_3p_freq/governor 2>/dev/null || true; "
+                + "settings put global policy_control \"immersive.full=" + getPackageName() + "\"; "
+                + "cmd statusbar send-disable-flag home recents statusbar-expansion notification-peek quick-settings");
+        setPowerHomeRelayEnabled(true);
+    }
+
+    private void disengageKiosk() {
+        runRootShell(
+                "cmd statusbar send-disable-flag none; "
+                + "settings delete global policy_control 2>/dev/null || true; "
+                + "echo powersave > /sys/class/devfreq/codec_3p_freq/governor 2>/dev/null || true");
+        setPowerHomeRelayEnabled(false);
     }
 
     @Override
@@ -3691,6 +3821,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     @Override
+    public boolean isNativeTouchscreenModeActive() {
+        return prefConfig.enableMultiTouchScreen && !prefConfig.touchscreenTrackpad;
+    }
+
+    @Override
     public void onAnchorDragEnd(com.limelight.ui.AnchorDragGestureRecognizer.Action action) {
         if (conn == null) return;
         switch (action) {
@@ -4594,6 +4729,24 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             getClipboard(-1);
         }
         finish();
+    }
+
+    // kiosk-gestures (2026-08-30): originally repurposed disconnect() itself for this,
+    // which broke rotateScreen() -- it also calls disconnect() internally, as the second
+    // half of a relaunch-for-rotation dance (start a new Game activity, then disconnect()
+    // the old one). Repurposing it made the OLD instance try to enter PiP instead of
+    // finishing while the NEW instance was starting on top of it, which is what was
+    // flashing the stream shut on every start. Separate method instead, wired only from
+    // GameMenu's "Disconnect" option -- disconnect() itself is untouched/original again.
+    public void minimizeKioskToPip() {
+        disengageKiosk();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                enterPictureInPictureMode(getPictureInPictureParams(false));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     public void quit() {

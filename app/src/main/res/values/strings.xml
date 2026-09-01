@@ -374,6 +374,8 @@
     <string name="game_menu_select_steam_mode">Select Stream mode</string>
     <string name="game_menu_enable_zoom_mode">Enable Pan/Zoom</string>
     <string name="game_menu_disable_zoom_mode">Disable Pan/Zoom</string>
+    <string name="game_menu_disable_ime_spacer">Disable Host Keyboard Spacer</string>
+    <string name="game_menu_enable_ime_spacer">Enable Host Keyboard Spacer</string>
     <string name="game_menu_rotate_screen">Rotate Screen</string>
     <string name="game_menu_toggle_keyboard_model">Toggle Special keys</string>s
     <string name="game_menu_toggle_virtual_model">Toggle On-screen controller</string>

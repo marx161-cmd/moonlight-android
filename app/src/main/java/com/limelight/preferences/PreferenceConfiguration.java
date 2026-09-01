@@ -104,6 +104,8 @@ public class PreferenceConfiguration {
     private static final String PREVENT_PACKET_LOSS_PREF_STRING = "checkbox_prevent_packet_loss";
 
     private static final String LIST_ONSCREEN_KEYBOARD_ALIGN_MODE = "list_onscreen_keyboard_align_mode";
+    private static final String SUPPRESS_IME_SPACER_PREF_STRING = "checkbox_suppress_ime_spacer";
+    private static final boolean DEFAULT_SUPPRESS_IME_SPACER = false;
 
     private static final String CHECKBOX_ENABLE_BATTERY_REPORT = "checkbox_gamepad_enable_battery_report";
     private static final String CHECKBOX_FORCE_QWERTY = "checkbox_force_qwerty";
@@ -311,6 +313,10 @@ public class PreferenceConfiguration {
 
     //串流画面顶部居中显示
     public boolean alignDisplayTopCenter;
+
+    // Skip publishing IME visibility to the host (no host-side keyboard spacer) --
+    // for profiles that already negotiate a shorter stream height for the keyboard.
+    public boolean suppressImeSpacer;
 
     //触控屏幕灵敏度
     public int touchSensitivityX;
@@ -981,6 +987,8 @@ private static int getFramePacingValue(Context context) {
         config.enableFullExDisplay=prefs.getBoolean("checkbox_enable_fullexdisplay",false);
 
         config.alignDisplayTopCenter =prefs.getBoolean("checkbox_enable_view_top_center",false);
+
+        config.suppressImeSpacer = prefs.getBoolean(SUPPRESS_IME_SPACER_PREF_STRING, DEFAULT_SUPPRESS_IME_SPACER);
 
         config.touchSensitivityX =prefs.getInt(SEEKBAR_TOUCH_SENSITIVITY,100);
 

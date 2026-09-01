@@ -266,6 +266,9 @@ public class GameMenu implements Game.GameMenuCallbacks {
         }
         
         options.add(new MenuOption(getString(R.string.game_menu_toggle_hud), true, game::toggleHUD));
+        options.add(new MenuOption(getString(game.isImeSpacerSuppressed() ?
+                R.string.game_menu_enable_ime_spacer : R.string.game_menu_disable_ime_spacer),
+                true, game::toggleImeSpacerSuppression));
         options.add(new MenuOption(getString(R.string.game_menu_toggle_floating_button), true, game::toggleFloatingButtonVisibility));
         options.add(new MenuOption(getString(R.string.game_menu_toggle_keyboard_model), true, game::toggleKeyboardController));
         if (!game.isOnExternalDisplay()) {
@@ -305,7 +308,14 @@ public class GameMenu implements Game.GameMenuCallbacks {
     public void showMenu(GameInputDevice device) {
         List<MenuOption> options = new ArrayList<>();
 
-        options.add(new MenuOption(getString(R.string.game_menu_disconnect), game::disconnect));
+        options.add(new MenuOption(getString(R.string.game_menu_disconnect), game::minimizeKioskToPip));
+
+        // kiosk-gestures (2026-08-30): the real Home-swipe auto-trigger (crDroid
+        // AbsSwipeUpHandler patch) isn't reliably firing yet -- see
+        // ~/builds/android/kiosk-gestures/scope.md. This manual entry uses the exact
+        // same relay (Game.openPixelMenu()), confirmed working end-to-end live, so the
+        // Pixel menu is reachable without the i3 bar this session removed.
+        options.add(new MenuOption("Pixel Menu", game::openPixelMenu));
 
         options.add(new MenuOption(getString(R.string.game_menu_quit_session), game::quit));
 
