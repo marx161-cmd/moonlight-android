@@ -43,10 +43,18 @@ import android.view.View;
  * from anchor-drag's own trigger condition -- so the recognizer was stealing ALL two-finger
  * input, not just the deliberate hold-then-add-second-finger case. Confirmed live: "blocks
  * half the normal gestures."
+ *
+ * Spread-corner tap (2026-09-01): one finger down in the top-right zone, a second in the
+ * bottom-left zone (either order), both released quickly with no drag -> {@link
+ * Host#onSpreadTap()}. Diagonally-opposite corners, not just "any two corners," so it can't
+ * be hit by an accidental single-hand grip near one edge. Deliberately a TAP, not a drag --
+ * unlike WINDOW_MOVE/click-drag it never calls onAnchorDragStart, so nothing is forwarded to
+ * the host mid-gesture; it either fires once on a clean release or fires nothing at all.
  */
 public class AnchorDragGestureRecognizer {
 
     public enum Action { WINDOW_MOVE, LEFT_CLICK_DRAG, RIGHT_CLICK_DRAG }
+    private enum Corner { NONE, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT }
 
     public interface Host {
         /** Anchor-drag started: begin holding the modifier/button for this action. */
@@ -58,6 +66,8 @@ public class AnchorDragGestureRecognizer {
         /** True when touch events are being relayed to the host as real multi-touch (native
          * touchscreen mode) rather than translated to mouse input -- see the class doc. */
         boolean isNativeTouchscreenModeActive();
+        /** Fired once on a clean top-right + bottom-left spread tap (see class doc). */
+        void onSpreadTap();
     }
 
     /** Minimum time the anchor finger must be down before a second finger touching down
@@ -65,20 +75,29 @@ public class AnchorDragGestureRecognizer {
      * both fingers land close together in time -- passes through untouched instead. */
     private static final long MIN_ANCHOR_HOLD_MS = 200;
 
-    /** Anchor must land within this many px of the view's top-left (0,0) to trigger
-     * WINDOW_MOVE instead of a click-drag. */
+    /** Anchor must land within this many px of a corner to trigger WINDOW_MOVE (top-left)
+     * or count toward a spread tap (top-right/bottom-left) instead of a click-drag. */
     private static final float CORNER_ZONE_DP = 120f;
+
+    /** Max total gesture duration (first finger down to last finger up) for a spread tap
+     * to fire, mirroring Game.java's existing N-finger-tap thresholds. */
+    private static final long SPREAD_TAP_THRESHOLD_MS = 300;
 
     private final Host host;
     private final View hapticView;
-    private final float anchorSlopPx; // max anchor movement to still count as "held"
+    private final float anchorSlopPx; // max finger movement to still count as "held"/"tap"
     private final float cornerZonePx;
 
     private boolean dragging;
     private boolean anchorInCorner;
+    private Corner anchorCorner = Corner.NONE;
     private Action currentAction;
     private int anchorPid = -1, dragPid = -1, dragPid2 = -1;
     private float anchorDownX, anchorDownY, lastDragX, lastDragY;
+
+    private boolean spreadTapPending;
+    private int spreadSecondPid = -1;
+    private float spreadSecondDownX, spreadSecondDownY;
 
     public AnchorDragGestureRecognizer(Host host, View hapticView, float density) {
         this.host = host;
@@ -94,23 +113,53 @@ public class AnchorDragGestureRecognizer {
             case MotionEvent.ACTION_DOWN: {
                 dragging = false;
                 currentAction = null;
+                spreadTapPending = false;
+                spreadSecondPid = -1;
                 anchorPid = ev.getPointerId(0);
                 anchorDownX = ev.getX();
                 anchorDownY = ev.getY();
-                anchorInCorner = anchorDownX <= cornerZonePx && anchorDownY <= cornerZonePx;
+                anchorCorner = cornerAt(anchorDownX, anchorDownY);
+                anchorInCorner = anchorCorner == Corner.TOP_LEFT;
                 dragPid = -1;
                 dragPid2 = -1;
                 return false; // normal touch -> let the stream have it, same as always
             }
 
             case MotionEvent.ACTION_POINTER_DOWN: {
-                // Second finger while the first is still near its down point => anchor-drag.
+                // Second finger while the first is still near its down point => anchor-drag
+                // (or a spread tap, checked first below).
                 int ai = ev.findPointerIndex(anchorPid);
                 boolean anchorHeld = ai >= 0
                         && Math.hypot(ev.getX(ai) - anchorDownX, ev.getY(ai) - anchorDownY) < anchorSlopPx;
+
+                // Spread-corner tap check runs BEFORE the anchor-drag hold-timer gate below,
+                // and deliberately ignores it: a real two-finger tap lands both fingers
+                // within a few tens of ms of each other, nowhere near MIN_ANCHOR_HOLD_MS
+                // (200ms, tuned for the *staggered* hold-then-add-second-finger drag
+                // gesture). Gating the spread tap on that timer would make it unreachable
+                // for an actual simultaneous tap.
+                if (!dragging && !spreadTapPending && anchorHeld) {
+                    int idx = ev.getActionIndex();
+                    float secondX = ev.getX(idx), secondY = ev.getY(idx);
+                    Corner secondCorner = cornerAt(secondX, secondY);
+                    boolean isSpread = (anchorCorner == Corner.TOP_RIGHT && secondCorner == Corner.BOTTOM_LEFT)
+                            || (anchorCorner == Corner.BOTTOM_LEFT && secondCorner == Corner.TOP_RIGHT);
+                    if (isSpread) {
+                        // Tap candidate, not a drag: claim the gesture but don't start any
+                        // mouse/keyboard action yet -- only onSpreadTap() on a clean release.
+                        spreadTapPending = true;
+                        spreadSecondPid = ev.getPointerId(idx);
+                        spreadSecondDownX = secondX;
+                        spreadSecondDownY = secondY;
+                        return true;
+                    }
+                }
+
                 boolean anchorHeldLongEnough =
                         (ev.getEventTime() - ev.getDownTime()) >= MIN_ANCHOR_HOLD_MS;
                 if (!dragging && anchorHeld && anchorHeldLongEnough) {
+                    int idx = ev.getActionIndex();
+                    float secondX = ev.getX(idx), secondY = ev.getY(idx);
                     if (!anchorInCorner && host.isNativeTouchscreenModeActive()) {
                         // Native touchscreen mode: only the corner-anchored WINDOW_MOVE case is
                         // ours to claim. A real pinch/two-finger-scroll starts with this same
@@ -118,10 +167,9 @@ public class AnchorDragGestureRecognizer {
                         // it fall through to trySendTouchEvent() as real multi-touch.
                         return false;
                     }
-                    int idx = ev.getActionIndex();
                     dragPid = ev.getPointerId(idx);
-                    lastDragX = ev.getX(idx);
-                    lastDragY = ev.getY(idx);
+                    lastDragX = secondX;
+                    lastDragY = secondY;
                     dragging = true;
                     currentAction = anchorInCorner ? Action.WINDOW_MOVE : Action.LEFT_CLICK_DRAG;
                     host.onAnchorDragStart(currentAction);
@@ -151,6 +199,22 @@ public class AnchorDragGestureRecognizer {
                     }
                     return true;
                 }
+                if (spreadTapPending) {
+                    // Either finger drifting too far means this was a drag, not a tap --
+                    // stop tracking it as a spread-tap candidate, but keep consuming the
+                    // stream (already claimed at ACTION_POINTER_DOWN) rather than letting a
+                    // partial event stream leak through mid-gesture.
+                    int ai = ev.findPointerIndex(anchorPid);
+                    int si = ev.findPointerIndex(spreadSecondPid);
+                    boolean anchorMoved = ai >= 0
+                            && Math.hypot(ev.getX(ai) - anchorDownX, ev.getY(ai) - anchorDownY) >= anchorSlopPx;
+                    boolean secondMoved = si >= 0
+                            && Math.hypot(ev.getX(si) - spreadSecondDownX, ev.getY(si) - spreadSecondDownY) >= anchorSlopPx;
+                    if (anchorMoved || secondMoved) {
+                        spreadTapPending = false;
+                    }
+                    return true;
+                }
                 return false;
             }
 
@@ -165,21 +229,43 @@ public class AnchorDragGestureRecognizer {
                         dragPid2 = -1;
                     }
                 }
-                return dragging;
+                if (spreadTapPending) {
+                    int upPid = ev.getPointerId(ev.getActionIndex());
+                    if (upPid == anchorPid || upPid == spreadSecondPid) {
+                        if ((ev.getEventTime() - ev.getDownTime()) <= SPREAD_TAP_THRESHOLD_MS) {
+                            host.onSpreadTap();
+                            haptic();
+                        }
+                        spreadTapPending = false;
+                        spreadSecondPid = -1;
+                    }
+                }
+                return dragging || spreadTapPending;
             }
 
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
-                boolean consumed = dragging;
+                boolean consumed = dragging || spreadTapPending;
                 if (dragging) host.onAnchorDragEnd(currentAction);
                 dragging = false;
                 currentAction = null;
                 dragPid = -1;
                 dragPid2 = -1;
+                spreadTapPending = false;
+                spreadSecondPid = -1;
                 return consumed;
             }
         }
         return dragging;
+    }
+
+    private Corner cornerAt(float x, float y) {
+        int w = hapticView != null ? hapticView.getWidth() : 0;
+        int h = hapticView != null ? hapticView.getHeight() : 0;
+        if (x <= cornerZonePx && y <= cornerZonePx) return Corner.TOP_LEFT;
+        if (x >= w - cornerZonePx && y <= cornerZonePx) return Corner.TOP_RIGHT;
+        if (x <= cornerZonePx && y >= h - cornerZonePx) return Corner.BOTTOM_LEFT;
+        return Corner.NONE;
     }
 
     private void haptic() {

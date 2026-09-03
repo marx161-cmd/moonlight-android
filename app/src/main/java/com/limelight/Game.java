@@ -1044,6 +1044,24 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
     }
 
+    // kiosk-gestures (2026-09-01): left/right edge-swipe -> next workspace on whatever
+    // output currently has focus (i3 `workspace next_on_output`, restricted implicitly by
+    // focus rather than a hardcoded output name). Same Super+Ctrl+<key> relay pattern as
+    // openPixelMenu() above -- VK_N is 0x4E, an otherwise-unused chord.
+    private static final short VK_N = 0x4E;
+    public void switchWorkspace() {
+        if (conn == null) return;
+        byte noModifier = (byte) 0;
+        conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, noModifier, (byte) 0);
+        conn.sendKeyboardInput((short) com.limelight.binding.input.KeyboardTranslator.VK_LCONTROL,
+                com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, noModifier, (byte) 0);
+        conn.sendKeyboardInput(VK_N, com.limelight.nvstream.input.KeyboardPacket.KEY_DOWN, noModifier, (byte) 0);
+        conn.sendKeyboardInput(VK_N, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
+        conn.sendKeyboardInput((short) com.limelight.binding.input.KeyboardTranslator.VK_LCONTROL,
+                com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
+        conn.sendKeyboardInput(VK_LWIN, com.limelight.nvstream.input.KeyboardPacket.KEY_UP, noModifier, (byte) 0);
+    }
+
     private final BroadcastReceiver kioskHomeGestureReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -1857,9 +1875,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     private final Runnable hideSystemUi = new Runnable() {
         @Override
         public void run() {
-            // TODO: Do we want to use WindowInsetsController here on R+ instead of
-            // SYSTEM_UI_FLAG_IMMERSIVE_STICKY? They seem to do the same thing as of S...
-
             // In multi-window mode on N+, we need to drop our layout flags or we'll
             // be drawing underneath the system UI.
             if (!prefConfig.fullScreen || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInMultiWindowMode())) {
@@ -1867,14 +1882,22 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
             }
             else {
-                // Use immersive mode
+                // Use immersive mode. Non-sticky (SYSTEM_UI_FLAG_IMMERSIVE, not
+                // _STICKY) deliberately: sticky mode makes the first edge swipe only
+                // transiently peek the hidden system bars/gesture nav rather than
+                // firing the actual back/home action, requiring a second swipe to
+                // commit it. Every session here is kiosk-locked (engageKiosk() on
+                // every onResume, see below) and kiosk already fully suppresses the
+                // status/nav bars its own way (cmd statusbar send-disable-flag), so
+                // sticky's "peek before commit" safety net serves no purpose and just
+                // adds gesture latency.
                 Game.this.getWindow().getDecorView().setSystemUiVisibility(
                         View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                                 View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
                                 View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
                                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
                                 View.SYSTEM_UI_FLAG_FULLSCREEN |
-                                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                                View.SYSTEM_UI_FLAG_IMMERSIVE);
             }
         }
     };
@@ -3610,7 +3633,12 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                             toggleKeyboard();
                             return true;
                         } else if (currentEventTime - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
-                            toggleTouchMode();
+                            // kiosk-gestures (2026-09-01): fallback trigger for the floating i3
+                            // Pixel Menu, since the real Home-edge-swipe -> openPixelMenu() path
+                            // is still unreliable (see ~/builds/android/kiosk-gestures/scope.md).
+                            // Touch-mode toggle (formerly here) moved to the spread-corner tap,
+                            // see AnchorDragGestureRecognizer.
+                            openPixelMenu();
                             return true;
                         } else if (currentEventTime - fiveFingerDownTime < FIVE_FINGER_TAP_THRESHOLD) {
                             if(prefConfig.enableBackMenu) {
@@ -3684,7 +3712,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     fiveFingerDownTime = 0;
                     break;
                 } else if (pointerCount == 4 && fourFingerDownTime > 0 && currentEventTime - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
-                    toggleTouchMode();
+                    openPixelMenu();
                     fourFingerDownTime = 0;
                     break;
                 } else if (pointerCount == 3 && threeFingerDownTime > 0 && currentEventTime - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
@@ -3823,6 +3851,14 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     @Override
     public boolean isNativeTouchscreenModeActive() {
         return prefConfig.enableMultiTouchScreen && !prefConfig.touchscreenTrackpad;
+    }
+
+    // kiosk-gestures (2026-09-01): spread-corner tap (top-right + bottom-left) took over
+    // the touch-mode toggle formerly on plain 4-finger tap, which now opens the Pixel
+    // Menu instead -- see the 4-finger-tap call sites above.
+    @Override
+    public void onSpreadTap() {
+        toggleTouchMode();
     }
 
     @Override
@@ -4397,8 +4433,13 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     public void onBackPressed() {
+        // kiosk-gestures (2026-09-01): rewired from showGameMenu() (still reachable via
+        // 5-finger tap) to workspace-switching. Legacy dispatch (enableOnBackInvokedCallback=
+        // false, see manifest) means this fires identically for the left/right edge-swipe
+        // and the hardware/controller back button, with no left-vs-right info -- one action
+        // either way (next_on_output), not a real prev/next pair. See scope.md.
         if(prefConfig.enableBackMenu){
-            showGameMenu(null);
+            switchWorkspace();
             return;
         }
         super.onBackPressed();
