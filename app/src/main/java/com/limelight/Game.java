@@ -1892,6 +1892,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     protected void onDestroy() {
+        stopGyroMouse();
         super.onDestroy();
 
         instance = null;
@@ -1944,6 +1945,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     protected void onPause() {
+        stopGyroMouse();
         if (isFinishing()) {
             // Stop any further input device notifications before we lose focus (and pointer capture)
             if (controllerHandler != null) {
@@ -2271,8 +2273,48 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         return (byte) modifierFlags;
     }
 
+    // Volume keys while streaming (user 2026-10-15): vol-down HELD = gyro mouse for as long
+    // as it is held; vol-up = comrade's i3 "ALL" (gather every workspace onto the output the
+    // pointer is on). Consumed here so they no longer change the phone volume at all.
+    private GyroMouse gyroMouse;
+
+    private boolean handleStreamVolumeKey(int keyCode, KeyEvent event, boolean down) {
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_DOWN && keyCode != KeyEvent.KEYCODE_VOLUME_UP) {
+            return false;
+        }
+        if (!connected || conn == null) {
+            return false;   // not streaming yet: leave the keys to Android
+        }
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (down && event.getRepeatCount() == 0) {
+                if (gyroMouse == null) {
+                    gyroMouse = new GyroMouse(this, (dx, dy) -> {
+                        if (!connected || conn == null) return;
+                        short sx = (short) dx, sy = (short) dy;
+                        if (prefConfig.absoluteMouseMode) {
+                            sendAbsoluteMouseMoveAsPosition(sx, sy);
+                        } else {
+                            conn.sendMouseMove(sx, sy);
+                        }
+                    });
+                }
+                gyroMouse.start();
+            } else if (!down && gyroMouse != null) {
+                gyroMouse.stop();
+            }
+        } else if (down && event.getRepeatCount() == 0) {
+            publishCybersynFifo("cybersyn/comrade/action", "script:i3-gather-here");
+        }
+        return true;
+    }
+
+    private void stopGyroMouse() {
+        if (gyroMouse != null) gyroMouse.stop();
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (handleStreamVolumeKey(keyCode, event, true)) return true;
         return handleKeyDown(event) || super.onKeyDown(keyCode, event);
     }
 
@@ -2364,6 +2406,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (handleStreamVolumeKey(keyCode, event, false)) return true;
         return handleKeyUp(event) || super.onKeyUp(keyCode, event);
     }
 

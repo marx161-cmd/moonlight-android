@@ -495,3 +495,29 @@ handler in `cybersyn-hid-relay.py` is left in place (inert without a sender).
 This supersedes the volume-mirror part of Cybersyn's 2026-08-24 "Oppo/EasyEffects
 volume mirror" entry; that entry stays as history. Companion change in
 Cybersyn: in Artemis the volume keys are now hijacked (vol-down gyro, vol-up ALL).
+
+## 2026-10-15 — Gyro mouse + "ALL" live in Diana (volume keys while streaming)
+
+**Decided with the user:** while a stream is connected, Diana consumes the
+volume keys itself (`Game.onKeyDown/onKeyUp` → `handleStreamVolumeKey`), so
+they never change the phone volume and no Cybersyn hijack/accessibility
+service is involved:
+
+- **vol-down held → gyro mouse CURSOR** (user chose the cursor, not the shader
+  camera, as the target). New `GyroMouse.java`: `TYPE_GAME_ROTATION_VECTOR` at
+  SENSOR_DELAY_GAME on its own thread, same angle maths and feel as
+  `cybersyn-hid-relay.py`'s pointer path (yaw + roll, 2500 px/rad each, X and Y
+  inverted as the relay runs with `--invert-y --vertical-axis roll`), re-baselined
+  on every press, sub-pixel remainder carried, 300 px/step clamp. Output goes
+  through the stream's own mouse path (`conn.sendMouseMove`, or
+  `sendAbsoluteMouseMoveAsPosition` in absolute mode) — no MQTT. Stops on key-up,
+  `onPause`, `onDestroy` so it can never stay latched.
+- **vol-up → ALL**: `publishCybersynFifo("cybersyn/comrade/action",
+  "script:i3-gather-here")` (relay script wraps `i3-gather-workspaces-current-output.sh`).
+- Keys are only taken when `connected && conn != null`; before the stream is up
+  they stay Android's.
+- **Not live-tested by feel** (the sensor/axis signs are copied from the relay, not
+  re-derived): sign or gain may need a tweak after first real use.
+- Companion: Cybersyn's gyro mode, `GyroStreamer` and Artemis detection were removed
+  (Cybersyn scope.md, same date). The shader-camera gyro path in the relay still
+  exists but nothing on the phone feeds it now.
