@@ -963,21 +963,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             } catch (Throwable ignored) {}
         }
 
-        // Mirror the phone's own STREAM_MUSIC volume (the normal, unprivileged per-app
-        // media volume every app already has -- no special permission, no OTA) onto the
-        // AMD->Oppo audio relay via cybersyn-hid-relay.py. Diana already holds real
-        // playback + audio focus while streaming, so the volume rocker already targets
-        // this stream during normal use; this just forwards the resulting level.
-        try {
-            IntentFilter volumeFilter = new IntentFilter("android.media.VOLUME_CHANGED_ACTION");
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(musicVolumeReceiver, volumeFilter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                registerReceiver(musicVolumeReceiver, volumeFilter);
-            }
-            publishOppoVolume();
-        } catch (Throwable ignored) {}
-
         // kiosk-gestures (2026-08-30): AbsSwipeUpHandler.getHomeTarget() (crDroid
         // Launcher3/quickstep patch) rejects the real Home edge-swipe while this app is
         // kiosk-flagged and broadcasts KIOSK_HOME_GESTURE, explicitly targeted at our
@@ -992,7 +977,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             kioskHomeFilter.addAction("com.termux.diana.MINIMIZE_TO_PIP");
             kioskHomeFilter.addAction("com.termux.diana.ROTATE_SCREEN");
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                // RECEIVER_EXPORTED, unlike musicVolumeReceiver above: this broadcast comes
+                // RECEIVER_EXPORTED (not NOT_EXPORTED): this broadcast comes
                 // from a genuinely different app/process (Launcher3/quickstep, or Termux),
                 // not the system/self -- NOT_EXPORTED blocks exactly that, confirmed live
                 // 2026-08-30 (manual test broadcast returned result=0, never reached
@@ -1003,17 +988,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             }
         } catch (Throwable ignored) {}
     }
-
-    private Integer lastPublishedOppoVolumePercent = null;
-    private final BroadcastReceiver musicVolumeReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            int streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1);
-            if (streamType == AudioManager.STREAM_MUSIC) {
-                publishOppoVolume();
-            }
-        }
-    };
 
     // kiosk-gestures (2026-08-30): relays the caught Home gesture to comrade over the
     // already-live keyboard-passthrough channel, as an unused chord (Super+Ctrl+M) rather
@@ -1080,22 +1054,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             openPixelMenu();
         }
     };
-
-    private void publishOppoVolume() {
-        try {
-            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (am == null) return;
-            int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-            if (max <= 0) return;
-            int current = am.getStreamVolume(AudioManager.STREAM_MUSIC);
-            int percent = Math.round((current * 100f) / max);
-            if (lastPublishedOppoVolumePercent != null && lastPublishedOppoVolumePercent == percent) {
-                return;
-            }
-            lastPublishedOppoVolumePercent = percent;
-            publishCybersynFifo("cybersyn/hid/oppo_volume", String.valueOf(percent));
-        } catch (Throwable ignored) {}
-    }
 
     private Boolean lastPublishedKeyboardVisible = null;
     private Boolean pendingKeyboardVisible = null;
@@ -1939,7 +1897,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         instance = null;
         timerHandler.removeCallbacksAndMessages(null);
 
-        try { unregisterReceiver(musicVolumeReceiver); } catch (Throwable ignored) {}
         try { unregisterReceiver(kioskHomeGestureReceiver); } catch (Throwable ignored) {}
 
         if (prefConfig.enableFullExDisplay) handleDisplayRemoved();

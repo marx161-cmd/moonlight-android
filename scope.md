@@ -480,3 +480,18 @@ indirect workaround). Moved to its own project:
 `~/builds/android/kiosk-gestures/scope.md` — read that file for the
 Back-vs-Home mechanism findings and current decision; this file keeps only
 the kiosk-engage/power-exit/PiP/menu-hosting pieces above.
+
+## 2026-10-15 — Remove the phone→desktop volume mirror (publishOppoVolume)
+
+**Decided with the user:** the phone must never set the PC volume. Diana
+registered a `VOLUME_CHANGED_ACTION` receiver while streaming and, on every
+phone STREAM_MUSIC change, published `cybersyn/hid/oppo_volume` (via the
+Cybersyn FIFO) which `cybersyn-hid-relay.py` applied with `pactl
+set-sink-volume ee_processed_sink`. User found it annoying that adjusting
+the phone moved the PC volume. Removed from `Game.java`: the receiver
+registration, `musicVolumeReceiver`, `publishOppoVolume()`,
+`lastPublishedOppoVolumePercent` and the unregister call. The comrade-side
+handler in `cybersyn-hid-relay.py` is left in place (inert without a sender).
+This supersedes the volume-mirror part of Cybersyn's 2026-08-24 "Oppo/EasyEffects
+volume mirror" entry; that entry stays as history. Companion change in
+Cybersyn: in Artemis the volume keys are now hijacked (vol-down gyro, vol-up ALL).
