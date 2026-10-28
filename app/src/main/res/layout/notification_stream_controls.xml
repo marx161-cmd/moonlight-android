@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2026-10-28 (scope.md "stream control notification"): Diana's stream controls, also drawn by the crDroid island pill
+     when it is expanded. Two rows of four 44 dp buttons, the same look as ShaderEditor's and Cybersyn's island panels. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="4dp">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/sc_controller" style="@style/IslandButton" android:text="Controller"/>
+        <Button android:id="@+id/sc_special" style="@style/IslandButton" android:text="Special keys"/>
+        <Button android:id="@+id/sc_hud" style="@style/IslandButton" android:text="Perf overlay"/>
+        <Button android:id="@+id/sc_disconnect" style="@style/IslandButton" android:text="Disconnect"/>
+    </LinearLayout>
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/sc_spacer" style="@style/IslandButton" android:text="KB spacer"/>
+        <Button android:id="@+id/sc_upload" style="@style/IslandButton" android:text="Upload clip"/>
+        <Button android:id="@+id/sc_fetch" style="@style/IslandButton" android:text="Fetch clip"/>
+        <Button android:id="@+id/sc_rotate" style="@style/IslandButton" android:text="Rotate"/>
+    </LinearLayout>
+</LinearLayout>

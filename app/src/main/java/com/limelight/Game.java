@@ -65,6 +65,11 @@ import android.content.ComponentName;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.widget.RemoteViews;
+import androidx.core.app.NotificationCompat;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
@@ -976,6 +981,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             kioskHomeFilter.addAction("com.termux.diana.KIOSK_HOME_GESTURE");
             kioskHomeFilter.addAction("com.termux.diana.MINIMIZE_TO_PIP");
             kioskHomeFilter.addAction("com.termux.diana.ROTATE_SCREEN");
+            kioskHomeFilter.addAction(STREAM_CTRL_ACTION);   // the stream-control notification (2026-10-28)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 // RECEIVER_EXPORTED (not NOT_EXPORTED): this broadcast comes
                 // from a genuinely different app/process (Launcher3/quickstep, or Termux),
@@ -1051,9 +1057,93 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 rotateScreen();
                 return;
             }
+            if (STREAM_CTRL_ACTION.equals(action)) {
+                onStreamControl(intent.getIntExtra(STREAM_CTRL_EXTRA, -1));
+                return;
+            }
             openPixelMenu();
         }
     };
+
+    // ---- STREAM-CONTROL NOTIFICATION (2026-10-28, scope.md): an ongoing notification with a custom
+    // layout, promoted into the crDroid island pill (ongoing + a progress value), whose 8 buttons run the
+    // same methods as the in-stream menu. Posted on every resume, removed when the stream activity that
+    // owns it is destroyed -- rotateScreen() starts a NEW Game before finishing the old one, so only the
+    // current owner may cancel it.
+    private static final String STREAM_CTRL_ACTION = "com.termux.diana.STREAM_CTRL";
+    private static final String STREAM_CTRL_EXTRA = "cmd";
+    private static final String STREAM_CTRL_CHANNEL = "stream_controls";
+    private static final int STREAM_CTRL_ID = 0x5d01;
+    private static Game streamCtrlOwner;
+    private static final int[] STREAM_CTRL_VIEWS = {R.id.sc_controller, R.id.sc_special, R.id.sc_hud,
+            R.id.sc_disconnect, R.id.sc_spacer, R.id.sc_upload, R.id.sc_fetch, R.id.sc_rotate};
+    private static final int SC_ON = 0xFF7CFFB2, SC_OFF = 0xFFE6E6E6;
+
+    private void onStreamControl(int cmd) {
+        switch (cmd) {
+            case 0: toggleVirtualController(); break;
+            case 1: toggleKeyboardController(); break;
+            case 2: toggleHUD(); break;
+            case 3: minimizeKioskToPip(); return;         // = the menu's "Disconnect" (user 10-28: PiP; Quit Session ends it)
+            case 4: toggleImeSpacerSuppression(); break;
+            case 5: sendClipboard(true); break;
+            case 6: getClipboard(0); break;
+            case 7: rotateScreen(); return;               // relaunches Game; the new one re-posts
+            default: return;
+        }
+        postStreamControls();                             // toggles: show the new state
+    }
+
+    private RemoteViews streamControlViews() {
+        RemoteViews v = new RemoteViews(getPackageName(), R.layout.notification_stream_controls);
+        for (int i = 0; i < STREAM_CTRL_VIEWS.length; i++) {
+            Intent intent = new Intent(STREAM_CTRL_ACTION).setPackage(getPackageName()).putExtra(STREAM_CTRL_EXTRA, i);
+            v.setOnClickPendingIntent(STREAM_CTRL_VIEWS[i], PendingIntent.getBroadcast(this, i, intent,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+        }
+        // toggles are tinted while on
+        v.setTextColor(R.id.sc_controller, prefConfig.onscreenController && virtualController != null ? SC_ON : SC_OFF);
+        v.setTextColor(R.id.sc_special, keyBoardController != null && keyBoardController.shown ? SC_ON : SC_OFF);
+        v.setTextColor(R.id.sc_hud, prefConfig.enablePerfOverlay ? SC_ON : SC_OFF);
+        v.setTextColor(R.id.sc_spacer, prefConfig.suppressImeSpacer ? SC_OFF : SC_ON);   // on = the host spacer works
+        return v;
+    }
+
+    private void postStreamControls() {
+        try {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null) return;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                nm.createNotificationChannel(new NotificationChannel(STREAM_CTRL_CHANNEL,
+                        "Stream controls", NotificationManager.IMPORTANCE_LOW));
+            }
+            NotificationCompat.Builder b = new NotificationCompat.Builder(this, STREAM_CTRL_CHANNEL)
+                    .setSmallIcon(R.drawable.app_icon)
+                    .setContentTitle("Diana")
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setShowWhen(false)
+                    .setSilent(true)
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .setStyle(new NotificationCompat.DecoratedCustomViewStyle())
+                    .setCustomContentView(streamControlViews())
+                    .setCustomBigContentView(streamControlViews())
+                    // ongoing + a progress value = promoted into the crDroid island (ShaderEditor v119's recipe)
+                    .setProgress(100, 100, false);
+            nm.notify(STREAM_CTRL_ID, b.build());
+            streamCtrlOwner = this;
+        } catch (Throwable t) {
+            android.util.Log.w("StreamControls", "post failed", t);
+        }
+    }
+
+    private void cancelStreamControls() {
+        if (streamCtrlOwner != this) return;
+        streamCtrlOwner = null;
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null) nm.cancel(STREAM_CTRL_ID);
+    }
 
     private Boolean lastPublishedKeyboardVisible = null;
     private Boolean pendingKeyboardVisible = null;
@@ -1893,6 +1983,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     @Override
     protected void onDestroy() {
         stopGyroMouse();
+        cancelStreamControls();
         super.onDestroy();
 
         instance = null;
@@ -1941,6 +2032,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     protected void onResume() {
         super.onResume();
         engageKiosk();
+        postStreamControls();
     }
 
     @Override
@@ -1997,7 +2089,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         runRootShell(
                 "echo performance > /sys/class/devfreq/codec_3p_freq/governor 2>/dev/null || true; "
                 + "settings put global policy_control \"immersive.full=" + getPackageName() + "\"; "
-                + "cmd statusbar send-disable-flag home recents statusbar-expansion notification-peek quick-settings");
+                // 2026-10-28 (user): the shade may come down on a SECOND pull (first swipe = the
+                // immersive bars peek, second = shade) -- so statusbar-expansion is no longer
+                // disabled. Home/recents stay blocked; heads-up peeks and the QS panel too.
+                + "cmd statusbar send-disable-flag home recents notification-peek quick-settings");
         setPowerHomeRelayEnabled(true);
     }
 

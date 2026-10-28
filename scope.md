@@ -521,3 +521,27 @@ service is involved:
 - Companion: Cybersyn's gyro mode, `GyroStreamer` and Artemis detection were removed
   (Cybersyn scope.md, same date). The shader-camera gyro path in the relay still
   exists but nothing on the phone feeds it now.
+
+## 2026-10-28 -- stream control notification (custom layout, crDroid island pill) + shade on second pull
+
+**User asks:**
+- In kiosk the notification shade may come down on a SECOND pull (first swipe = the immersive bars
+  peek); Home swipes stay blocked. Done in `engageKiosk()`: `statusbar-expansion` dropped from the
+  `send-disable-flag` list; home, recents, notification-peek, quick-settings stay disabled.
+  (The live kiosk is Diana's own `engageKiosk()`; Dhizuku is device owner but no lock-task apps are set.)
+- A Diana notification with a CUSTOM layout, also shown in the crDroid island pill (the user will
+  turn off the battery/other ongoing items so the pill holds just the control panels). Buttons:
+  on-screen controller toggle, special keys toggle, performance overlay toggle, disconnect, host
+  keyboard spacer toggle, upload clipboard, fetch clipboard, rotate screen ("upload/fetch keyboard"
+  in the user's words = the menu's Upload/Fetch Clipboard).
+- User: "wait before building" (until the notification is in) -> build + install once, together.
+
+**Plan (Claude):** island recipe as ShaderEditor's v119 control notification
+(reference_crdroid_island_custom_panels): ONGOING + a progress value -> promoted into the pill; the
+expanded pill renders the notification's custom RemoteViews. 8 buttons, toggles show their state.
+Posted while a stream runs, removed when it ends. Buttons = PendingIntent broadcasts into Game's
+existing kiosk receiver (one new action + a command extra), calling the same methods the in-stream
+menu calls. "Disconnect" = the real `disconnect()` (ends the stream), NOT the menu's
+`minimizeKioskToPip()` -- to confirm with the user.
+- 2026-10-28 (user): "Disconnect did put me in PiP, and Quit Session ends the stream" -> the panel's
+  Disconnect = `minimizeKioskToPip()`, exactly like the menu's Disconnect (NOT `disconnect()`).
